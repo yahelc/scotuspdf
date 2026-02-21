@@ -19,9 +19,13 @@ npm run preview  # Preview production build locally
 rm -rf node_modules/.vite && npm run dev
 ```
 
-**Deploying**:
+**Deploying** (always purge CDN cache after deploy):
 ```bash
 rm -rf node_modules/.vite && npx netlify-cli deploy --prod --dir=dist
+
+# Purge Netlify CDN cache (required — API responses have long cache headers)
+TOKEN=$(python3 -c "import json; c=json.load(open('$HOME/Library/Preferences/netlify/config.json')); users=c.get('users',{}); uid=list(users.keys())[0]; print(users[uid]['auth']['token'])")
+curl -s -X POST "https://api.netlify.com/api/v1/purge" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"site_id":"751ab2cd-6265-41d6-8d7e-591b870e6d42"}'
 ```
 
 ## Architecture

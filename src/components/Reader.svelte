@@ -36,7 +36,7 @@
     loading = true;
     error = null;
 
-    fetch(`/api/parse?url=${encodeURIComponent(pdfUrl)}`)
+    fetch(`/api/parse?url=${encodeURIComponent(pdfUrl)}&v=2`)
       .then((r) => {
         if (!r.ok) return r.json().then((e: any) => Promise.reject(e.error || 'Parse failed'));
         return r.json();

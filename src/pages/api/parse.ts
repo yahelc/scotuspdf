@@ -51,7 +51,7 @@ export const GET: APIRoute = async ({ request }) => {
     return new Response(JSON.stringify(cached), {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'max-age=86400, s-maxage=2592000',
+        'Cache-Control': 'max-age=0, s-maxage=2592000',
       },
     });
   }
@@ -94,7 +94,7 @@ export const GET: APIRoute = async ({ request }) => {
   return new Response(JSON.stringify(parsed), {
     headers: {
       'Content-Type': 'application/json',
-      'Cache-Control': 'max-age=86400, s-maxage=2592000',
+      'Cache-Control': 'max-age=0, s-maxage=2592000',
     },
   });
 };

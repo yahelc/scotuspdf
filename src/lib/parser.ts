@@ -171,6 +171,31 @@ function fixSmallCaps(text: string): string {
   return result;
 }
 
+/**
+ * Rejoin words that were hyphenated across line breaks in the PDF.
+ *
+ * SCOTUS PDFs break words at line ends with hyphens. After text extraction
+ * these appear as "Eco - nomic" or "con- stitution" (the space comes from
+ * joining separate text lines).
+ *
+ * We only rejoin when the fragment after the hyphen starts with a lowercase
+ * letter, which avoids false positives on real hyphens in compound words
+ * like "well-known" or "revenue-raising" (where the second part is also
+ * a full word starting lowercase — but those words don't have spaces
+ * around the hyphen in the PDF text).
+ */
+function dehyphenate(text: string): string {
+  // Fix footnote-interrupted hyphenations first (more specific):
+  // "con - 1 solidated" → "consolidated" (footnote number embedded mid-word)
+  let result = text.replace(/(\w)\s*-\s+\d+\s+([a-z])/g, '$1$2');
+
+  // Then fix standard line-break hyphenations:
+  // "Eco - nomic" or "con- stitution" → "Economic" or "constitution"
+  result = result.replace(/(\w)\s*-\s+([a-z])/g, '$1$2');
+
+  return result;
+}
+
 function buildParagraphs(text: string): Paragraph[] {
   const paragraphs: Paragraph[] = [];
   const rawParagraphs = text.split(/\n{2,}/);
@@ -178,6 +203,9 @@ function buildParagraphs(text: string): Paragraph[] {
   for (const raw of rawParagraphs) {
     let trimmed = raw.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
     if (!trimmed || trimmed.length < 3) continue;
+
+    // Rejoin line-break hyphenations
+    trimmed = dehyphenate(trimmed);
 
     // Skip repeated headers
     if (/^\d+\s+[A-Z\s]+v\.\s+[A-Z\s]+$/.test(trimmed)) continue;
@@ -187,7 +215,23 @@ function buildParagraphs(text: string): Paragraph[] {
     // Fix small-cap rendering artifacts
     trimmed = fixSmallCaps(trimmed);
 
-    paragraphs.push({ text: trimmed, footnotes: [] });
+    // Merge with previous paragraph if this is a continuation:
+    // previous paragraph doesn't end with sentence-ending punctuation,
+    // and this one starts with a lowercase letter.
+    if (
+      paragraphs.length > 0 &&
+      trimmed.length > 0 &&
+      /^[a-z]/.test(trimmed) &&
+      !/[.!?;:'")\u201d]\s*$/.test(paragraphs[paragraphs.length - 1].text)
+    ) {
+      // Re-run dehyphenate on the junction in case a hyphenated word was split
+      // across the paragraph boundary (e.g., "Am -" + "bassadors")
+      paragraphs[paragraphs.length - 1].text = dehyphenate(
+        paragraphs[paragraphs.length - 1].text + ' ' + trimmed
+      );
+    } else {
+      paragraphs.push({ text: trimmed, footnotes: [] });
+    }
   }
 
   return paragraphs;
@@ -275,8 +319,10 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
     // SCOTUS PDFs render names in small caps: the first letter is at body font size
     // and remaining letters are ALL-CAPS at a smaller size (e.g., "J" at 11pt + "USTICE" at 9pt).
     // pdf.js returns these as separate items, so we need to join them without a space.
-    const textLines: { text: string; avgFontSize: number }[] = [];
+    // Track x-position of first item on each line to detect paragraph indentation.
+    const textLines: { text: string; avgFontSize: number; startX: number }[] = [];
     let curText = '';
+    let curStartX = 0;
     let lastY = -1;
     let lastFontSize = 0;
     let fsSum = 0;
@@ -285,8 +331,9 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
     for (const item of bodyItems) {
       if (lastY >= 0 && Math.abs(item.y - lastY) > 2) {
         // New line
-        if (curText.trim()) textLines.push({ text: curText.trim(), avgFontSize: fsCount > 0 ? fsSum / fsCount : 0 });
+        if (curText.trim()) textLines.push({ text: curText.trim(), avgFontSize: fsCount > 0 ? fsSum / fsCount : 0, startX: curStartX });
         curText = item.text;
+        curStartX = item.x;
         fsSum = item.fontSize;
         fsCount = 1;
       } else {
@@ -304,6 +351,7 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
           // Join without space — small-cap continuation
           curText += trimmedItem;
         } else {
+          if (!curText) curStartX = item.x;
           curText += (curText && !curText.endsWith(' ') ? ' ' : '') + item.text;
         }
         fsSum += item.fontSize;
@@ -312,7 +360,7 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
       lastY = item.y;
       lastFontSize = item.fontSize;
     }
-    if (curText.trim()) textLines.push({ text: curText.trim(), avgFontSize: fsCount > 0 ? fsSum / fsCount : 0 });
+    if (curText.trim()) textLines.push({ text: curText.trim(), avgFontSize: fsCount > 0 ? fsSum / fsCount : 0, startX: curStartX });
 
     // Find dominant font size for footnote detection
     const fsSizes = textLines.map((l) => Math.round(l.avgFontSize));
@@ -324,7 +372,23 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
       if (freq > maxFreq) { maxFreq = freq; bodyFS = fs; }
     }
 
+    // Find the dominant left margin for body text lines (most common startX)
+    const bodyFontLines = textLines.filter(
+      (l) => l.avgFontSize > 0 && bodyFS > 0 && l.avgFontSize >= bodyFS - 1
+    );
+    const xFreq = new Map<number, number>();
+    for (const line of bodyFontLines) {
+      const rx = Math.round(line.startX);
+      xFreq.set(rx, (xFreq.get(rx) || 0) + 1);
+    }
+    let bodyLeftMargin = 0;
+    let maxXFreq = 0;
+    for (const [x, freq] of xFreq) {
+      if (freq > maxXFreq) { maxXFreq = freq; bodyLeftMargin = x; }
+    }
+
     // Separate footnotes (smaller font, start with number)
+    // Mark lines that are indented (paragraph starts) with a preceding blank line
     const bodyLines: string[] = [];
     const footnotes = new Map<number, string>();
     let inFN = false;
@@ -358,6 +422,18 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
         inFN = false;
         fnId = 0;
         fnText = '';
+      }
+
+      // Detect paragraph breaks via indentation.
+      // SCOTUS body text uses a consistent left margin; new paragraphs are indented
+      // ~9-11pt from that margin. We avoid triggering on centered headers/titles
+      // by requiring the line to be at body font size and the indent to be small
+      // (real paragraph indents are 9-25pt, not 100+pt like centered text).
+      const indent = line.startX - bodyLeftMargin;
+      const isBodyFont = Math.abs(line.avgFontSize - bodyFS) < 1.5;
+      const isParagraphIndent = bodyLeftMargin > 0 && indent > 5 && indent < 50 && isBodyFont;
+      if (isParagraphIndent && bodyLines.length > 0) {
+        bodyLines.push(''); // blank line = paragraph break
       }
 
       bodyLines.push(line.text);
@@ -403,7 +479,7 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
       currentFootnotes = new Map();
     }
 
-    currentLines.push(...page.bodyLines, '');
+    currentLines.push(...page.bodyLines);
     for (const [id, text] of page.footnotes) {
       currentFootnotes.set(id, text);
     }
