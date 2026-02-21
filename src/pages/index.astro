@@ -1,0 +1,195 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="SCOTUS PDF Reader">
+  <main class="home">
+    <header class="hero">
+      <h1>SCOTUS PDF Reader</h1>
+      <p class="subtitle">Read Supreme Court opinions in a mobile-friendly format</p>
+    </header>
+
+    <form class="search-form" id="search-form">
+      <input
+        type="url"
+        id="url-input"
+        placeholder="Paste a supremecourt.gov PDF URL..."
+        autocomplete="off"
+        required
+      />
+      <button type="submit">Read</button>
+    </form>
+
+    <section class="recent">
+      <h2>Recent Opinions</h2>
+      <div class="opinion-list" id="opinion-list">
+        <p class="loading">Loading recent opinions...</p>
+      </div>
+    </section>
+  </main>
+</Layout>
+
+<script>
+  const form = document.getElementById('search-form') as HTMLFormElement;
+  const input = document.getElementById('url-input') as HTMLInputElement;
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const url = input.value.trim();
+    if (!url) return;
+
+    try {
+      const parsed = new URL(url);
+      if (!parsed.hostname.includes('supremecourt.gov')) {
+        alert('Please enter a URL from supremecourt.gov');
+        return;
+      }
+      // Extract term and filename from path
+      // e.g., /opinions/24pdf/23-1345_opinion.pdf
+      const pathMatch = parsed.pathname.match(/\/(\d{2})pdf\/([\w\-]+\.pdf)/i);
+      if (pathMatch) {
+        window.location.href = `/read/${pathMatch[1]}/${pathMatch[2]}`;
+      } else {
+        // Fallback: encode the full URL
+        window.location.href = `/read?url=${encodeURIComponent(url)}`;
+      }
+    } catch {
+      alert('Please enter a valid URL');
+    }
+  });
+
+  // Load recent opinions
+  async function loadRecent() {
+    const list = document.getElementById('opinion-list')!;
+    try {
+      const resp = await fetch('/api/recent');
+      if (!resp.ok) throw new Error('Failed to load');
+      const opinions = await resp.json();
+
+      if (!opinions.length) {
+        list.innerHTML = '<p class="empty">No recent opinions found</p>';
+        return;
+      }
+
+      list.innerHTML = opinions.map((op: any) => `
+        <a href="/read/${op.term}/${op.filename}" class="opinion-card">
+          <span class="opinion-title">${op.title}</span>
+          <span class="opinion-meta">${op.docketNumber} &middot; ${op.date}</span>
+        </a>
+      `).join('');
+    } catch {
+      list.innerHTML = '<p class="empty">Could not load recent opinions</p>';
+    }
+  }
+
+  loadRecent();
+</script>
+
+<style>
+  .home {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+  }
+
+  .hero {
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+
+  .hero h1 {
+    font-family: var(--font-body);
+    font-size: 2rem;
+    color: var(--accent);
+    margin-bottom: 0.5rem;
+  }
+
+  .subtitle {
+    color: var(--text-secondary);
+    font-size: 1rem;
+  }
+
+  .search-form {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 3rem;
+  }
+
+  .search-form input {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-surface);
+    color: var(--text);
+    font-family: var(--font-ui);
+  }
+
+  .search-form input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .search-form button {
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: var(--font-ui);
+    font-weight: 600;
+  }
+
+  .search-form button:hover {
+    background: var(--accent-light);
+  }
+
+  .recent h2 {
+    font-family: var(--font-body);
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+    color: var(--text-secondary);
+  }
+
+  .opinion-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .loading, .empty {
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+
+  :global(.opinion-card) {
+    display: flex;
+    flex-direction: column;
+    padding: 1rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    text-decoration: none;
+    color: var(--text);
+    transition: border-color 0.15s;
+  }
+
+  :global(.opinion-card:hover) {
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+
+  :global(.opinion-title) {
+    font-family: var(--font-body);
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+
+  :global(.opinion-meta) {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+  }
+</style>

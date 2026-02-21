@@ -1,0 +1,75 @@
+---
+interface Props {
+  title: string;
+  class?: string;
+}
+
+const { title, class: className } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Read Supreme Court opinions in a mobile-friendly format" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title}</title>
+  </head>
+  <body class={className}>
+    <slot />
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    --bg: #faf8f0;
+    --bg-surface: #fff;
+    --text: #1a1a1a;
+    --text-secondary: #555;
+    --accent: #8b0000;
+    --accent-light: #b22222;
+    --border: #ddd;
+    --font-body: 'Century Schoolbook', 'Century', Georgia, serif;
+    --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a1a;
+      --bg-surface: #252525;
+      --text: #e0ddd4;
+      --text-secondary: #999;
+      --accent: #d4564a;
+      --accent-light: #e87c71;
+      --border: #333;
+    }
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html {
+    font-family: var(--font-ui);
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    min-height: 100dvh;
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: var(--accent-light);
+    text-decoration: underline;
+  }
+</style>

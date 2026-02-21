@@ -1,0 +1,6 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  included_files = ["node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"]

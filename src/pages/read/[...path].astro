@@ -1,0 +1,36 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Reader from '../../components/Reader.svelte';
+
+export const prerender = false;
+
+const path = Astro.params.path || '';
+const parts = path.split('/');
+
+// Reconstruct the SCOTUS PDF URL from term/filename
+let pdfUrl = '';
+if (parts.length >= 2) {
+  const term = parts[0];
+  const filename = parts.slice(1).join('/');
+  pdfUrl = `https://www.supremecourt.gov/opinions/${term}pdf/${filename}`;
+}
+
+// Allow ?url= override
+const urlParam = Astro.url.searchParams.get('url');
+if (urlParam) {
+  pdfUrl = urlParam;
+}
+---
+
+<Layout title="Reading..." class="reader-page">
+  <Reader client:load pdfUrl={pdfUrl} />
+</Layout>
+
+<style>
+  :global(.reader-page) {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: hidden;
+  }
+</style>
