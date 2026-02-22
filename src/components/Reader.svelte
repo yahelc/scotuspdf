@@ -858,7 +858,7 @@
   .content {
     flex: 1;
     overflow-y: auto;
-    padding: 1.5rem 1rem;
+    padding: 1.5rem 1rem calc(1.5rem + env(safe-area-inset-bottom, 0px));
     max-width: 680px;
     margin: 0 auto;
     width: 100%;
@@ -869,7 +869,7 @@
 
   .content.paged {
     overflow: hidden;
-    padding: 1.5rem 0 2rem;
+    padding: 1.5rem 0 calc(2rem + env(safe-area-inset-bottom, 0px));
     max-width: none;
     min-height: 0;
     column-fill: auto;
@@ -1087,6 +1087,8 @@
     font-family: var(--font-body);
     max-width: 680px;
     margin: 0 auto;
+    max-height: 50vh;
+    overflow-y: auto;
   }
 
   .footnote-header {
@@ -1205,6 +1207,7 @@
     background: var(--bg-surface);
     border-top: 1px solid var(--border);
     padding: 0.25rem;
+    padding-bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));
     z-index: 10;
   }
 
@@ -1212,7 +1215,7 @@
     position: fixed;
     bottom: 0;
     left: 0;
-    height: 3px;
+    height: calc(3px + env(safe-area-inset-bottom, 0px));
     background: var(--accent);
     transition: width 0.1s;
     z-index: 10;
