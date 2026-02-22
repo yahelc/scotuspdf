@@ -18,7 +18,7 @@
   let showChapterNav = $state(false);
 
   // Footnote popover state
-  let activeFootnote: { id: number; text: string; top: number } | null = $state(null);
+  let activeFootnote: { id: number; text: string } | null = $state(null);
 
   // Chapter progress
   let chapterProgress = $state(0);
@@ -444,11 +444,7 @@
     const fn = chapterFootnotes.find((f) => f.id === fnId);
     if (!fn) return;
 
-    const target = event.target as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    // Use viewport-relative fixed positioning
-    const top = rect.bottom + 4;
-    activeFootnote = { id: fn.id, text: fn.text, top };
+    activeFootnote = { id: fn.id, text: fn.text };
   }
 
   function dismissFootnote() {
@@ -655,7 +651,6 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="footnote-popover"
-      style="top: {activeFootnote.top}px"
       onclick={(e) => e.stopPropagation()}
     >
       <div class="footnote-header">
@@ -858,7 +853,7 @@
   .content {
     flex: 1;
     overflow-y: auto;
-    padding: 1.5rem 1rem calc(1.5rem + env(safe-area-inset-bottom, 0px));
+    padding: 1.5rem 1rem;
     max-width: 680px;
     margin: 0 auto;
     width: 100%;
@@ -869,7 +864,7 @@
 
   .content.paged {
     overflow: hidden;
-    padding: 1.5rem 0 calc(2rem + env(safe-area-inset-bottom, 0px));
+    padding: 1.5rem 0 2rem;
     max-width: none;
     min-height: 0;
     column-fill: auto;
@@ -1077,11 +1072,11 @@
     z-index: 30;
     left: 0;
     right: 0;
+    bottom: 0;
     background: var(--bg-surface);
     border-top: 2px solid var(--accent);
-    border-bottom: 2px solid var(--accent);
     padding: 0.75rem 1rem;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.1);
     font-size: 0.9em;
     line-height: 1.6;
     font-family: var(--font-body);
@@ -1089,6 +1084,7 @@
     margin: 0 auto;
     max-height: 50vh;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .footnote-header {
@@ -1207,7 +1203,6 @@
     background: var(--bg-surface);
     border-top: 1px solid var(--border);
     padding: 0.25rem;
-    padding-bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));
     z-index: 10;
   }
 
@@ -1215,7 +1210,7 @@
     position: fixed;
     bottom: 0;
     left: 0;
-    height: calc(3px + env(safe-area-inset-bottom, 0px));
+    height: 3px;
     background: var(--accent);
     transition: width 0.1s;
     z-index: 10;
