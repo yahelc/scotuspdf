@@ -315,11 +315,61 @@
     return () => ro.disconnect();
   });
 
+  /** Find the first visible content element in the current viewport */
+  function findAnchorElement(): HTMLElement | null {
+    if (!contentEl) return null;
+    const candidates = contentEl.querySelectorAll('.paragraph, .section-heading, .chapter-heading');
+    const contentRect = contentEl.getBoundingClientRect();
+
+    if (prefs.viewMode === 'paged') {
+      // In paged mode, find first element whose left edge is within the current page
+      for (const el of candidates) {
+        const rect = el.getBoundingClientRect();
+        if (rect.left >= contentRect.left && rect.left < contentRect.right) {
+          return el as HTMLElement;
+        }
+      }
+    } else {
+      // In scroll mode, find the first element at or below the toolbar (~80px)
+      let lastAbove: HTMLElement | null = null;
+      for (const el of candidates) {
+        const rect = el.getBoundingClientRect();
+        if (rect.top >= 80) return el as HTMLElement;
+        lastAbove = el as HTMLElement;
+      }
+      return lastAbove;
+    }
+    return null;
+  }
+
   function setViewMode(mode: 'scroll' | 'paged') {
+    const anchor = findAnchorElement();
     prefs.viewMode = mode;
     savePreferences(prefs);
+
     if (mode === 'paged') {
-      currentPage = 0;
+      // Wait for paged layout to settle, then navigate to anchor's page
+      const pollForLayout = () => {
+        let attempts = 0;
+        const poll = () => {
+          attempts++;
+          if (pageWidth > 0 && anchor) {
+            const page = Math.floor(anchor.offsetLeft / pageWidth);
+            goToPage(page);
+          } else if (attempts < 30) {
+            setTimeout(poll, 50);
+          }
+        };
+        requestAnimationFrame(poll);
+      };
+      pollForLayout();
+    } else {
+      // Switching to scroll mode — scroll anchor into view after layout
+      if (anchor) {
+        requestAnimationFrame(() => {
+          anchor.scrollIntoView({ block: 'start' });
+        });
+      }
     }
   }
 
@@ -407,7 +457,13 @@
 
   function scrollToRef(chapterId: string, fnId: number) {
     const el = document.getElementById(`${chapterId}-ref-${fnId}`);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!el) return;
+    if (prefs.viewMode === 'paged' && pageWidth > 0) {
+      const page = Math.floor(el.offsetLeft / pageWidth);
+      goToPage(page);
+    } else {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
   }
 </script>
 
@@ -874,6 +930,10 @@
     max-width: 680px;
     margin-left: auto;
     margin-right: auto;
+  }
+
+  .content.paged .chapter {
+    break-before: column;
   }
 
   .case-header {
