@@ -150,22 +150,33 @@
     });
   }
 
+  // The page width for paged mode = one full scroll step.
+  // We use the outer wrapper's width so columns + gaps tile exactly.
+  let pageWidth = $state(0);
+
   function recalcPages() {
     if (!contentEl || prefs.viewMode !== 'paged') return;
     requestAnimationFrame(() => {
       if (!contentEl) return;
+      // In paged mode, padding is 0 so clientWidth == full box width.
+      // Each "page" = column-width + column-gap, but the last column has no trailing gap.
+      // We set column-gap to 0 and column-width to clientWidth, so each page === clientWidth.
       const w = contentEl.clientWidth;
-      totalPages = Math.max(1, Math.ceil(contentEl.scrollWidth / w));
-      if (currentPage >= totalPages) currentPage = totalPages - 1;
+      pageWidth = w;
+      contentEl.style.setProperty('--col-width', `${w}px`);
+      requestAnimationFrame(() => {
+        if (!contentEl) return;
+        totalPages = Math.max(1, Math.round(contentEl.scrollWidth / w));
+        if (currentPage >= totalPages) currentPage = totalPages - 1;
+      });
     });
   }
 
   function goToPage(n: number) {
-    if (!contentEl) return;
+    if (!contentEl || !pageWidth) return;
     const clamped = Math.max(0, Math.min(n, totalPages - 1));
     currentPage = clamped;
-    contentEl.scrollLeft = clamped * contentEl.clientWidth;
-    // Save position
+    contentEl.scrollTo({ left: clamped * pageWidth, behavior: 'instant' });
     savePosition(caseId, {
       chapterId: currentChapterId,
       scrollPercent: 0,
@@ -190,6 +201,25 @@
     }
   }
 
+  // Swipe support for paged mode
+  let touchStartX = 0;
+  let touchStartY = 0;
+  function handleTouchStart(e: TouchEvent) {
+    if (prefs.viewMode !== 'paged') return;
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+  }
+  function handleTouchEnd(e: TouchEvent) {
+    if (prefs.viewMode !== 'paged') return;
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    const dy = e.changedTouches[0].clientY - touchStartY;
+    // Only trigger if horizontal swipe is dominant and > 50px
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      if (dx < 0) goToPage(currentPage + 1);
+      else goToPage(currentPage - 1);
+    }
+  }
+
   // Recalc pages when viewMode, fontSize, or opinion changes
   $effect(() => {
     // Access reactive dependencies
@@ -200,6 +230,14 @@
       // Small delay to let layout settle
       setTimeout(recalcPages, 100);
     }
+  });
+
+  // Resize observer to keep paged mode in sync with container size changes
+  $effect(() => {
+    if (!contentEl || prefs.viewMode !== 'paged') return;
+    const ro = new ResizeObserver(() => recalcPages());
+    ro.observe(contentEl);
+    return () => ro.disconnect();
   });
 
   function setViewMode(mode: 'scroll' | 'paged') {
@@ -242,6 +280,11 @@
     if (!opinion) return '';
     const ch = opinion.chapters.find((c) => c.id === currentChapterId);
     return ch ? ch.title : '';
+  }
+
+  /** Split boilerplate text on underscore separator runs for line-break rendering */
+  function splitBoilerplate(text: string): string[] {
+    return text.split(/\s*_{5,}\s*/).filter(Boolean);
   }
 
   /** Split paragraph text into segments of plain text and footnote references */
@@ -404,6 +447,8 @@
     bind:this={contentEl}
     onscroll={handleScroll}
     onclick={handleContentClick}
+    ontouchstart={handleTouchStart}
+    ontouchend={handleTouchEnd}
   >
     <div class="case-header">
       <h1>{opinion.caseTitle}</h1>
@@ -449,7 +494,7 @@
                   {#if bp.text.startsWith('{{bpj:')}
                     <p class="boilerplate-justice">{bp.text.slice(6, -2)}</p>
                   {:else if bp.text.startsWith('{{bp:')}
-                    <p>{bp.text.slice(5, -2)}</p>
+                    <p>{#each splitBoilerplate(bp.text.slice(5, -2)) as part, si}{#if si > 0}<br/>{/if}{part}{/each}</p>
                   {/if}
                 {/each}
               </div>
@@ -687,11 +732,22 @@
 
   .content.paged {
     overflow: hidden;
-    overflow-x: hidden;
+    padding: 1.5rem 0 2rem;
+    max-width: none;
+    min-height: 0;
     column-fill: auto;
     column-gap: 0;
-    column-width: 100%;
-    height: 100%;
+    column-width: var(--col-width, 100vw);
+  }
+
+  .content.paged .chapter,
+  .content.paged .case-header,
+  .content.paged .footnote-popover {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    max-width: 680px;
+    margin-left: auto;
+    margin-right: auto;
   }
 
   .case-header {
