@@ -499,6 +499,57 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
       }
     }
 
+    // Pre-process: snap floating superscript footnote refs to their nearest body
+    // text line. Superscripts float between lines (y between two baselines) and
+    // would otherwise be treated as separate lines, causing {{fn:N}} markers to
+    // appear at the wrong position in the text.
+    for (let idx = 0; idx < bodyItems.length; idx++) {
+      const item = bodyItems[idx];
+      const trimmedText = item.text.trim();
+      const isAboveSep = separatorY < 0 || item.y > separatorY + 2;
+      const isSuperRef = (
+        isAboveSep &&
+        /^\d{1,2}$/.test(trimmedText) &&
+        bodyFS > 0 &&
+        item.fontSize < bodyFS - 2.5
+      );
+      if (!isSuperRef) continue;
+
+      // Check if already on the same rounded y as a nearby body text item
+      let onBodyLine = false;
+      for (let j = Math.max(0, idx - 10); j < Math.min(bodyItems.length, idx + 10); j++) {
+        if (j === idx) continue;
+        const other = bodyItems[j];
+        if (/^\d{1,2}$/.test(other.text.trim()) && other.fontSize < bodyFS - 2.5) continue;
+        if (Math.abs(Math.round(other.y) - Math.round(item.y)) <= 2) {
+          onBodyLine = true;
+          break;
+        }
+      }
+      if (onBodyLine) continue;
+
+      // Find nearest body text item by y and snap to it
+      let nearestY = item.y;
+      let minDist = Infinity;
+      for (let j = Math.max(0, idx - 10); j < Math.min(bodyItems.length, idx + 10); j++) {
+        if (j === idx) continue;
+        const other = bodyItems[j];
+        if (/^\d{1,2}$/.test(other.text.trim()) && other.fontSize < bodyFS - 2.5) continue;
+        const dist = Math.abs(other.y - item.y);
+        if (dist < minDist) {
+          minDist = dist;
+          nearestY = other.y;
+        }
+      }
+      bodyItems[idx] = { ...item, y: nearestY };
+    }
+
+    // Re-sort after snapping superscript y positions
+    bodyItems.sort((a, b) => {
+      const dy = Math.round(b.y) - Math.round(a.y);
+      return dy !== 0 ? dy : a.x - b.x;
+    });
+
     // Group into text lines, handling small-cap name rendering.
     // SCOTUS PDFs render names in small caps: the first letter is at body font size
     // and remaining letters are ALL-CAPS at a smaller size (e.g., "J" at 11pt + "USTICE" at 9pt).

@@ -124,3 +124,22 @@ describe('Doe v. Dynamic Physical Therapy (preliminary print)', () => {
     expect(result.docketNumber).toBe('25-180');
   });
 });
+
+describe('Ellingburg v. US (24-482) — floating superscript regression', () => {
+  let result: Awaited<ReturnType<typeof parsePdf>>;
+
+  it('parses without error', async () => {
+    const data = loadFixture('24-482_d1oe.pdf');
+    result = await parsePdf(data, 'https://www.supremecourt.gov/opinions/25pdf/24-482_d1oe.pdf');
+  }, 30000);
+
+  it('footnote 2 is after "implicated.", not after "rights"', () => {
+    const thomas = result.chapters.find(c => c.id.includes('thomas'));
+    expect(thomas).toBeDefined();
+    const para = thomas!.paragraphs.find(p => p.text.includes('probate dispute') && p.text.includes('private rights'));
+    expect(para).toBeDefined();
+    // fn:2 must come AFTER "implicated", not after "rights"
+    expect(para!.text).toContain('implicated.{{fn:2}}');
+    expect(para!.text).not.toMatch(/rights\s*\{\{fn:2\}\}/);
+  });
+});
