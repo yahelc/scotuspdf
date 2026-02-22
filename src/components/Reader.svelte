@@ -298,21 +298,23 @@
     <a href="/">Back to home</a>
   </div>
 {:else if opinion}
-  <!-- Case name bar -->
-  <button class="case-name-bar" onclick={() => contentEl?.scrollTo({ top: 0, behavior: 'smooth' })}>
-    {opinion.caseTitle}
-  </button>
-
   <!-- Toolbar -->
   <header class="toolbar">
     <a href="/" class="back-link" aria-label="Home">&#8592;</a>
-    <button class="chapter-btn" onclick={() => showChapterNav = !showChapterNav}>
-      {currentChapterTitle()}
-      <span class="chevron">{showChapterNav ? '\u25B2' : '\u25BC'}</span>
-    </button>
-    {#if sectionBreadcrumb}
-      <span class="section-breadcrumb">{sectionBreadcrumb}</span>
-    {/if}
+    <div class="toolbar-info">
+      <button class="case-name-btn" onclick={() => contentEl?.scrollTo({ top: 0, behavior: 'smooth' })}>
+        {opinion.caseTitle}
+      </button>
+      <div class="toolbar-row">
+        <button class="chapter-btn" onclick={() => showChapterNav = !showChapterNav}>
+          {currentChapterTitle()}
+          <span class="chevron">{showChapterNav ? '\u25B2' : '\u25BC'}</span>
+        </button>
+        {#if sectionBreadcrumb}
+          <span class="section-breadcrumb">{sectionBreadcrumb}</span>
+        {/if}
+      </div>
+    </div>
     <div class="toolbar-controls">
       <button class="settings-btn" onclick={() => showSettings = !showSettings} aria-label="Settings">
         <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
@@ -511,7 +513,6 @@
   }
 
   .chapter-btn {
-    flex: 1;
     text-align: left;
     background: none;
     border: none;
@@ -561,32 +562,43 @@
     accent-color: var(--accent);
   }
 
-  .case-name-bar {
-    display: block;
-    width: 100%;
-    background: var(--accent);
-    color: #fff;
-    font-family: var(--font-ui);
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.35rem 1rem;
+  .toolbar-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .case-name-btn {
+    background: none;
     border: none;
+    font-family: var(--font-ui);
+    font-size: 0.7rem;
+    color: var(--text-secondary);
     cursor: pointer;
+    padding: 0;
     text-align: left;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex-shrink: 0;
   }
 
-  .case-name-bar:hover {
-    opacity: 0.9;
+  .case-name-btn:hover {
+    color: var(--text);
+  }
+
+  .toolbar-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
   }
 
   .chapter-overlay {
     position: fixed;
     inset: 0;
-    top: 77px;
+    top: 49px;
     z-index: 20;
     background: rgba(0, 0, 0, 0.3);
   }
@@ -828,7 +840,7 @@
   .settings-overlay {
     position: fixed;
     inset: 0;
-    top: 77px;
+    top: 49px;
     z-index: 20;
     background: rgba(0, 0, 0, 0.3);
   }
