@@ -435,13 +435,25 @@
       <section id={chapter.id} class="chapter">
         <h2 class="chapter-heading">{chapter.title}</h2>
 
-        {#each chapter.paragraphs as para}
+        {#each chapter.paragraphs as para, pi}
           {#if para.text.startsWith('{{h1:')}
             <div class="section-heading h1">{para.text.slice(5, -2)}</div>
           {:else if para.text.startsWith('{{h2:')}
             <div class="section-heading h2">{para.text.slice(5, -2)}</div>
           {:else if para.text.startsWith('{{h3:')}
             <div class="section-heading h3">{para.text.slice(5, -2)}</div>
+          {:else if para.text.startsWith('{{bp:') || para.text.startsWith('{{bpj:')}
+            {#if pi === 0 || (!chapter.paragraphs[pi - 1]?.text.startsWith('{{bp:') && !chapter.paragraphs[pi - 1]?.text.startsWith('{{bpj:'))}
+              <div class="chapter-boilerplate">
+                {#each chapter.paragraphs.slice(pi) as bp}
+                  {#if bp.text.startsWith('{{bpj:')}
+                    <p class="boilerplate-justice">{bp.text.slice(6, -2)}</p>
+                  {:else if bp.text.startsWith('{{bp:')}
+                    <p>{bp.text.slice(5, -2)}</p>
+                  {/if}
+                {/each}
+              </div>
+            {/if}
           {:else}
             <p class="paragraph">
               {#each parseSegments(para.text) as seg}
@@ -597,6 +609,8 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: block;
+    max-width: 100%;
   }
 
   .case-name-btn:hover {
@@ -729,6 +743,30 @@
 
   .section-heading.h3 {
     font-size: 1em;
+  }
+
+  .chapter-boilerplate {
+    text-align: center;
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+    line-height: 1.5;
+  }
+
+  .chapter-boilerplate p {
+    margin: 0.75em 0;
+  }
+
+  .chapter-boilerplate .boilerplate-justice {
+    margin-top: 1.25em;
+    padding-top: 0.75em;
+    border-top: 1px solid var(--border);
+    font-size: 1.15em;
+    color: var(--accent);
+    font-weight: 600;
+    font-style: italic;
   }
 
   .paragraph {
