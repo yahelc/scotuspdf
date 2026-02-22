@@ -58,25 +58,39 @@ import Layout from '../layouts/Layout.astro';
     }
   });
 
-  // Load recent opinions
+  // Load recent opinions + popular counts
   async function loadRecent() {
     const list = document.getElementById('opinion-list')!;
     try {
-      const resp = await fetch('/api/recent');
-      if (!resp.ok) throw new Error('Failed to load');
-      const opinions = await resp.json();
+      const [recentResp, popularResp] = await Promise.all([
+        fetch('/api/recent'),
+        fetch('/api/popular').catch(() => null),
+      ]);
+
+      if (!recentResp.ok) throw new Error('Failed to load');
+      const opinions = await recentResp.json();
+
+      let popular: Record<string, number> = {};
+      if (popularResp?.ok) {
+        try { popular = await popularResp.json(); } catch {}
+      }
 
       if (!opinions.length) {
         list.innerHTML = '<p class="empty">No recent opinions found</p>';
         return;
       }
 
-      list.innerHTML = opinions.map((op: any) => `
-        <a href="/read/${op.term}/${op.filename}" class="opinion-card">
-          <span class="opinion-title">${op.title}</span>
-          <span class="opinion-meta">${op.docketNumber} &middot; ${op.date}</span>
-        </a>
-      `).join('');
+      list.innerHTML = opinions.map((op: any) => {
+        const key = `${op.term}/${op.filename}`;
+        const views = popular[key];
+        const viewsBadge = views ? `<span class="opinion-views">${views} view${views === 1 ? '' : 's'}</span>` : '';
+        return `
+          <a href="/read/${op.term}/${op.filename}" class="opinion-card">
+            <span class="opinion-title">${op.title}</span>
+            <span class="opinion-meta">${op.docketNumber} &middot; ${op.date}${viewsBadge}</span>
+          </a>
+        `;
+      }).join('');
     } catch {
       list.innerHTML = '<p class="empty">Could not load recent opinions</p>';
     }
@@ -191,5 +205,16 @@ import Layout from '../layouts/Layout.astro';
   :global(.opinion-meta) {
     font-size: 0.85rem;
     color: var(--text-secondary);
+  }
+
+  :global(.opinion-views) {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.1rem 0.4rem;
+    border-radius: 10px;
+    margin-left: 0.5rem;
   }
 </style>

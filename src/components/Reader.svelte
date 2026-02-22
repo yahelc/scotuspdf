@@ -20,6 +20,19 @@
   // Footnote popover state
   let activeFootnote: { id: number; text: string; top: number } | null = $state(null);
 
+  // Chapter progress
+  let chapterProgress = $state(0);
+
+  // Section breadcrumb
+  let sectionBreadcrumb = $state('');
+
+  // Settings pane
+  let showSettings = $state(false);
+
+  // Paged mode state
+  let currentPage = $state(0);
+  let totalPages = $state(0);
+
   let contentEl: HTMLElement | undefined = $state();
 
   // Derived case ID for position storage
@@ -47,6 +60,15 @@
         if (data.caseTitle) {
           document.title = data.caseTitle + ' — SCOTUS PDF Reader';
         }
+        // Track hit (fire-and-forget)
+        const pathMatch = pdfUrl.match(/\/(\d{2})pdf\/([\w\-]+\.pdf)/i);
+        if (pathMatch) {
+          fetch('/api/hit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ caseKey: `${pathMatch[1]}/${pathMatch[2]}` }),
+          }).catch(() => {});
+        }
         // Set initial chapter
         if (data.chapters.length > 0) {
           const saved = loadPosition(caseId);
@@ -54,8 +76,14 @@
             currentChapterId = saved.chapterId;
             // Restore scroll after render
             requestAnimationFrame(() => {
-              const el = document.getElementById(saved.chapterId);
-              if (el) el.scrollIntoView();
+              if (prefs.viewMode === 'paged' && saved.page > 0) {
+                setTimeout(() => goToPage(saved.page), 150);
+              } else if (saved.scrollPercent > 0 && contentEl) {
+                contentEl.scrollTop = saved.scrollPercent * (contentEl.scrollHeight - contentEl.clientHeight);
+              } else {
+                const el = document.getElementById(saved.chapterId);
+                if (el) el.scrollIntoView();
+              }
             });
           } else {
             currentChapterId = data.chapters[0].id;
@@ -87,17 +115,32 @@
 
   function handleScroll() {
     if (!contentEl || !opinion) return;
+    if (prefs.viewMode === 'paged') return;
 
     // Update current chapter based on scroll position
+    let activeChapterEl: HTMLElement | null = null;
     for (const chapter of opinion.chapters) {
       const el = document.getElementById(chapter.id);
       if (el) {
         const rect = el.getBoundingClientRect();
         if (rect.top <= 80) {
           currentChapterId = chapter.id;
+          activeChapterEl = el;
         }
       }
     }
+
+    // Compute chapter progress
+    if (activeChapterEl) {
+      const rect = activeChapterEl.getBoundingClientRect();
+      const viewportHeight = contentEl.clientHeight;
+      const scrolledPast = -rect.top + 80;
+      const chapterHeight = activeChapterEl.offsetHeight;
+      chapterProgress = Math.min(1, Math.max(0, scrolledPast / (chapterHeight - viewportHeight)));
+    }
+
+    // Track section breadcrumb
+    updateBreadcrumb();
 
     const scrollPercent = contentEl.scrollTop / (contentEl.scrollHeight - contentEl.clientHeight);
     savePosition(caseId, {
@@ -105,6 +148,88 @@
       scrollPercent,
       page: 0,
     });
+  }
+
+  function recalcPages() {
+    if (!contentEl || prefs.viewMode !== 'paged') return;
+    requestAnimationFrame(() => {
+      if (!contentEl) return;
+      const w = contentEl.clientWidth;
+      totalPages = Math.max(1, Math.ceil(contentEl.scrollWidth / w));
+      if (currentPage >= totalPages) currentPage = totalPages - 1;
+    });
+  }
+
+  function goToPage(n: number) {
+    if (!contentEl) return;
+    const clamped = Math.max(0, Math.min(n, totalPages - 1));
+    currentPage = clamped;
+    contentEl.scrollLeft = clamped * contentEl.clientWidth;
+    // Save position
+    savePosition(caseId, {
+      chapterId: currentChapterId,
+      scrollPercent: 0,
+      page: currentPage,
+    });
+  }
+
+  function handleContentClick(e: MouseEvent) {
+    // Always dismiss footnote first
+    if (activeFootnote) {
+      dismissFootnote();
+      return;
+    }
+    if (prefs.viewMode !== 'paged' || !contentEl) return;
+    const rect = contentEl.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const w = rect.width;
+    if (x < w * 0.3) {
+      goToPage(currentPage - 1);
+    } else if (x > w * 0.7) {
+      goToPage(currentPage + 1);
+    }
+  }
+
+  // Recalc pages when viewMode, fontSize, or opinion changes
+  $effect(() => {
+    // Access reactive dependencies
+    prefs.viewMode;
+    prefs.fontSize;
+    opinion;
+    if (prefs.viewMode === 'paged') {
+      // Small delay to let layout settle
+      setTimeout(recalcPages, 100);
+    }
+  });
+
+  function setViewMode(mode: 'scroll' | 'paged') {
+    prefs.viewMode = mode;
+    savePreferences(prefs);
+    if (mode === 'paged') {
+      currentPage = 0;
+    }
+  }
+
+  function updateBreadcrumb() {
+    if (!contentEl) return;
+    const headings = contentEl.querySelectorAll('.section-heading');
+    let h1 = '', h2 = '', h3 = '';
+    for (const el of headings) {
+      const rect = el.getBoundingClientRect();
+      if (rect.top > 80) break;
+      if (el.classList.contains('h1')) {
+        h1 = el.textContent?.trim() ?? '';
+        h2 = '';
+        h3 = '';
+      } else if (el.classList.contains('h2')) {
+        h2 = el.textContent?.trim() ?? '';
+        h3 = '';
+      } else if (el.classList.contains('h3')) {
+        h3 = el.textContent?.trim() ?? '';
+      }
+    }
+    const parts = [h1, h2, h3].filter(Boolean);
+    sectionBreadcrumb = parts.join('\u2013');
   }
 
   function updateFontSize(e: Event) {
@@ -173,6 +298,11 @@
     <a href="/">Back to home</a>
   </div>
 {:else if opinion}
+  <!-- Case name bar -->
+  <button class="case-name-bar" onclick={() => contentEl?.scrollTo({ top: 0, behavior: 'smooth' })}>
+    {opinion.caseTitle}
+  </button>
+
   <!-- Toolbar -->
   <header class="toolbar">
     <a href="/" class="back-link" aria-label="Home">&#8592;</a>
@@ -180,18 +310,54 @@
       {currentChapterTitle()}
       <span class="chevron">{showChapterNav ? '\u25B2' : '\u25BC'}</span>
     </button>
+    {#if sectionBreadcrumb}
+      <span class="section-breadcrumb">{sectionBreadcrumb}</span>
+    {/if}
     <div class="toolbar-controls">
-      <input
-        type="range"
-        min="14"
-        max="28"
-        value={prefs.fontSize}
-        oninput={updateFontSize}
-        class="font-slider"
-        aria-label="Text size"
-      />
+      <button class="settings-btn" onclick={() => showSettings = !showSettings} aria-label="Settings">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.062 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"/>
+        </svg>
+      </button>
     </div>
   </header>
+
+  <!-- Settings pane -->
+  {#if showSettings}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="settings-overlay" onclick={() => showSettings = false}>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="settings-pane" onclick={(e) => e.stopPropagation()}>
+        <label class="settings-label">
+          Text size
+          <input
+            type="range"
+            min="14"
+            max="28"
+            value={prefs.fontSize}
+            oninput={updateFontSize}
+            class="font-slider"
+            aria-label="Text size"
+          />
+        </label>
+        <label class="settings-label">
+          Reading mode
+          <div class="mode-toggle">
+            <button
+              class="mode-btn"
+              class:active={prefs.viewMode === 'scroll'}
+              onclick={() => setViewMode('scroll')}
+            >Scroll</button>
+            <button
+              class="mode-btn"
+              class:active={prefs.viewMode === 'paged'}
+              onclick={() => setViewMode('paged')}
+            >Paged</button>
+          </div>
+        </label>
+      </div>
+    </div>
+  {/if}
 
   <!-- Chapter navigation dropdown -->
   {#if showChapterNav}
@@ -222,7 +388,7 @@
     style="font-size: {prefs.fontSize}px"
     bind:this={contentEl}
     onscroll={handleScroll}
-    onclick={dismissFootnote}
+    onclick={handleContentClick}
   >
     <div class="case-header">
       <h1>{opinion.caseTitle}</h1>
@@ -291,6 +457,13 @@
       </section>
     {/each}
   </div>
+
+  <!-- Progress bar (scroll mode) / Page indicator (paged mode) -->
+  {#if prefs.viewMode === 'paged'}
+    <div class="page-indicator">{currentPage + 1} / {totalPages}</div>
+  {:else}
+    <div class="progress-bar" style="width: {chapterProgress * 100}%"></div>
+  {/if}
 
 {/if}
 
@@ -366,6 +539,16 @@
     flex-shrink: 0;
   }
 
+  .section-breadcrumb {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-family: var(--font-ui);
+    white-space: nowrap;
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .toolbar-controls {
     display: flex;
     align-items: center;
@@ -378,10 +561,32 @@
     accent-color: var(--accent);
   }
 
+  .case-name-bar {
+    display: block;
+    width: 100%;
+    background: var(--accent);
+    color: #fff;
+    font-family: var(--font-ui);
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.35rem 1rem;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+  }
+
+  .case-name-bar:hover {
+    opacity: 0.9;
+  }
+
   .chapter-overlay {
     position: fixed;
     inset: 0;
-    top: 49px;
+    top: 77px;
     z-index: 20;
     background: rgba(0, 0, 0, 0.3);
   }
@@ -441,7 +646,11 @@
 
   .content.paged {
     overflow: hidden;
-    columns: 1;
+    overflow-x: hidden;
+    column-fill: auto;
+    column-gap: 0;
+    column-width: 100%;
+    height: 100%;
   }
 
   .case-header {
@@ -600,5 +809,94 @@
   .footnote-popover p {
     margin: 0;
     color: var(--text-secondary);
+  }
+
+  .settings-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0.25rem;
+    display: flex;
+    align-items: center;
+  }
+
+  .settings-btn:hover {
+    color: var(--text);
+  }
+
+  .settings-overlay {
+    position: fixed;
+    inset: 0;
+    top: 77px;
+    z-index: 20;
+    background: rgba(0, 0, 0, 0.3);
+  }
+
+  .settings-pane {
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .settings-label {
+    font-family: var(--font-ui);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .mode-toggle {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .mode-btn {
+    flex: 1;
+    padding: 0.4rem 0.75rem;
+    border: none;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  .mode-btn.active {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .page-indicator {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-family: var(--font-ui);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    padding: 0.25rem;
+    z-index: 10;
+  }
+
+  .progress-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    background: var(--accent);
+    transition: width 0.1s;
+    z-index: 10;
   }
 </style>
