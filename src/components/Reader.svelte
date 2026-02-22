@@ -34,6 +34,11 @@
   let totalPages = $state(0);
 
   let contentEl: HTMLElement | undefined = $state();
+  let wrapperEl: HTMLElement | undefined = $state();
+
+  // Paged mode chevron flash
+  let flashPrev = $state(false);
+  let flashNext = $state(false);
 
   // Derived case ID for position storage
   let caseId = $derived(pdfUrl.replace(/[^a-zA-Z0-9]/g, '_'));
@@ -175,6 +180,8 @@
         if (!contentEl) return;
         totalPages = Math.max(1, Math.round(contentEl.scrollWidth / w));
         if (currentPage >= totalPages) currentPage = totalPages - 1;
+        // Re-snap scroll position to current page with new width
+        contentEl.scrollTo({ left: currentPage * w, behavior: 'instant' });
       });
     });
   }
@@ -184,6 +191,25 @@
     const clamped = Math.max(0, Math.min(n, totalPages - 1));
     currentPage = clamped;
     contentEl.scrollTo({ left: clamped * pageWidth, behavior: 'instant' });
+    // Update current chapter based on which chapter is visible at this page
+    if (opinion) {
+      for (const chapter of opinion.chapters) {
+        const el = document.getElementById(chapter.id);
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          const contentRect = contentEl.getBoundingClientRect();
+          // Chapter is visible if its left edge is before viewport right
+          // and its right edge is after viewport left
+          if (rect.left < contentRect.right && rect.right > contentRect.left) {
+            if (currentChapterId !== chapter.id) {
+              currentChapterId = chapter.id;
+              sectionBreadcrumb = '';
+            }
+          }
+        }
+      }
+    }
+    updateBreadcrumb();
     savePosition(caseId, {
       chapterId: currentChapterId,
       scrollPercent: 0,
@@ -202,8 +228,12 @@
     const x = e.clientX - rect.left;
     const w = rect.width;
     if (x < w * 0.3) {
+      flashPrev = true;
+      setTimeout(() => flashPrev = false, 50);
       goToPage(currentPage - 1);
     } else if (x > w * 0.7) {
+      flashNext = true;
+      setTimeout(() => flashNext = false, 50);
       goToPage(currentPage + 1);
     }
   }
@@ -226,6 +256,27 @@
       else goToPage(currentPage - 1);
     }
   }
+
+  // Keyboard navigation for paged mode
+  function handleKeydown(e: KeyboardEvent) {
+    if (prefs.viewMode !== 'paged') return;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      flashNext = true;
+      setTimeout(() => flashNext = false, 50);
+      goToPage(currentPage + 1);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      flashPrev = true;
+      setTimeout(() => flashPrev = false, 50);
+      goToPage(currentPage - 1);
+    }
+  }
+
+  $effect(() => {
+    window.addEventListener('keydown', handleKeydown);
+    return () => window.removeEventListener('keydown', handleKeydown);
+  });
 
   // Recalc pages when viewMode, fontSize, or opinion changes
   $effect(() => {
@@ -262,9 +313,14 @@
     if (!chapterEl) { sectionBreadcrumb = ''; return; }
     const headings = chapterEl.querySelectorAll('.section-heading');
     let h1 = '', h2 = '', h3 = '';
+    const isPaged = prefs.viewMode === 'paged';
+    const viewportRight = contentEl.getBoundingClientRect().right;
     for (const el of headings) {
       const rect = el.getBoundingClientRect();
-      if (rect.top > 80) break;
+      // In scroll mode: heading has scrolled past the top toolbar
+      // In paged mode: heading is on a previous or current page (left edge before viewport right)
+      const isPast = isPaged ? rect.left < viewportRight : rect.top <= 80;
+      if (!isPast) break;
       if (el.classList.contains('h1')) {
         h1 = el.textContent?.trim() ?? '';
         h2 = '';
@@ -448,6 +504,7 @@
 
   <!-- Content -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="content-wrapper" class:paged={prefs.viewMode === 'paged'} class:flash-prev={flashPrev} class:flash-next={flashNext} bind:this={wrapperEl}>
   <div
     class="content"
     class:paged={prefs.viewMode === 'paged'}
@@ -536,6 +593,7 @@
         {/if}
       </section>
     {/each}
+  </div>
   </div>
 
   <!-- Progress bar (scroll mode) / Page indicator (paged mode) -->
@@ -746,6 +804,52 @@
     column-fill: auto;
     column-gap: 0;
     column-width: var(--col-width, 100vw);
+  }
+
+  .content-wrapper {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .content-wrapper.paged::before,
+  .content-wrapper.paged::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.08;
+    width: 0;
+    height: 0;
+    border-top: 28px solid transparent;
+    border-bottom: 28px solid transparent;
+  }
+
+  .content-wrapper.paged::before {
+    left: 4px;
+    border-right: 6px solid var(--text);
+    transform: translateY(-50%);
+    transition: opacity 0.05s ease-out;
+  }
+
+  .content-wrapper.paged::after {
+    right: 4px;
+    border-left: 6px solid var(--text);
+    transform: translateY(-50%);
+    transition: opacity 0.05s ease-out;
+  }
+
+  .content-wrapper.flash-prev::before {
+    opacity: 0.35;
+    transition: none;
+  }
+
+  .content-wrapper.flash-next::after {
+    opacity: 0.35;
+    transition: none;
   }
 
   .content.paged .chapter,
