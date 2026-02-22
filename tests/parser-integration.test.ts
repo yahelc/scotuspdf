@@ -59,6 +59,16 @@ describe('Learning Resources (24-1287)', () => {
     expect(allText).toContain('I join');
     expect(allText).toContain('KAVANAUGH');
   });
+
+  it('multi-page footnotes are not truncated (continuation text merged)', () => {
+    const kavanaugh = result.chapters.find(c => c.id.includes('kavanaugh'));
+    expect(kavanaugh).toBeDefined();
+    // Kavanaugh dissent has 25 footnotes; multi-page ones should be fully captured
+    const fn19 = kavanaugh!.footnotes.find(f => f.id === 19);
+    expect(fn19).toBeDefined();
+    // fn19 spans multiple pages — should contain substantial text, not be cut short
+    expect(fn19!.text.length).toBeGreaterThan(200);
+  });
 });
 
 describe('Trump v. US (23-939)', () => {

@@ -420,6 +420,7 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
     sectionHeader: SectionHeader | null;
     bodyLines: string[];
     footnotes: Map<number, string>;
+    footnoteContinuation: string;
   }
 
   const pages: PageResult[] = [];
@@ -697,6 +698,7 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
     }
 
     // Process footnotes (everything after the separator)
+    let footnoteContinuation = '';
     if (separatorIdx >= 0) {
       let fnId = 0;
       let fnText = '';
@@ -717,15 +719,22 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
           continue;
         }
 
-        // Continuation of current footnote (skip separator lines)
-        if (fnId > 0 && !/^——+$/.test(trimmed)) {
+        // Skip separator lines
+        if (/^——+$/.test(trimmed)) continue;
+
+        if (fnId > 0) {
+          // Continuation of current footnote
           fnText += ' ' + trimmed;
+        } else {
+          // No footnote number seen yet — this is continuation from previous page
+          footnoteContinuation += ' ' + trimmed;
         }
       }
       if (fnId > 0) footnotes.set(fnId, fnText.trim());
+      footnoteContinuation = footnoteContinuation.trim();
     }
 
-    pages.push({ sectionHeader, bodyLines, footnotes });
+    pages.push({ sectionHeader, bodyLines, footnotes, footnoteContinuation });
   }
 
   // Group pages into chapters by section header changes
@@ -765,8 +774,26 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
     }
 
     currentLines.push(...page.bodyLines);
+
+    // Merge footnote continuation text from previous page's last footnote
+    if (page.footnoteContinuation) {
+      let maxId = 0;
+      for (const id of currentFootnotes.keys()) {
+        if (id > maxId) maxId = id;
+      }
+      if (maxId > 0) {
+        const existing = currentFootnotes.get(maxId) || '';
+        currentFootnotes.set(maxId, (existing + ' ' + page.footnoteContinuation).trim());
+      }
+    }
+
     for (const [id, text] of page.footnotes) {
-      currentFootnotes.set(id, text);
+      const existing = currentFootnotes.get(id);
+      if (existing) {
+        currentFootnotes.set(id, existing + ' ' + text);
+      } else {
+        currentFootnotes.set(id, text);
+      }
     }
   }
 
