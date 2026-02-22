@@ -300,7 +300,20 @@
 {:else if opinion}
   <!-- Toolbar -->
   <header class="toolbar">
-    <a href="/" class="back-link" aria-label="Home">&#8592;</a>
+    <a href="/" class="back-link" aria-label="Home">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5">
+        <!-- pediment -->
+        <polygon points="12,2 3,8 21,8" fill="var(--accent)" stroke="var(--accent)" stroke-linejoin="round"/>
+        <!-- entablature -->
+        <rect x="3" y="8" width="18" height="2" fill="var(--accent)"/>
+        <!-- columns -->
+        <rect x="5" y="10" width="2" height="9" fill="var(--accent)"/>
+        <rect x="11" y="10" width="2" height="9" fill="var(--accent)"/>
+        <rect x="17" y="10" width="2" height="9" fill="var(--accent)"/>
+        <!-- base -->
+        <rect x="2" y="19" width="20" height="2" rx="0.5" fill="var(--accent)"/>
+      </svg>
+    </a>
     <div class="toolbar-info">
       <button class="case-name-btn" onclick={() => contentEl?.scrollTo({ top: 0, behavior: 'smooth' })}>
         {opinion.caseTitle}
@@ -507,9 +520,11 @@
   }
 
   .back-link {
-    font-size: 1.25rem;
-    padding: 0.25rem 0.5rem;
+    display: flex;
+    align-items: center;
+    padding: 0.25rem;
     text-decoration: none;
+    flex-shrink: 0;
   }
 
   .chapter-btn {
