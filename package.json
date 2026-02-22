@@ -6,7 +6,9 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "test": "vitest run",
+    "deploy": "npm test && npm run build && npx netlify-cli deploy --prod --no-build"
   },
   "dependencies": {
     "@astrojs/netlify": "^6.3.0",
@@ -16,5 +18,8 @@
     "astro": "^5.17.1",
     "pdfjs-dist": "^4.10.38",
     "svelte": "^5.20.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.18"
   }
 }

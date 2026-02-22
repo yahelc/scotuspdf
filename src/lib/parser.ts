@@ -51,7 +51,7 @@ function extractJusticeName(text: string): string | null {
   return null;
 }
 
-function parseSectionHeader(headerText: string): SectionHeader | null {
+export function parseSectionHeader(headerText: string): SectionHeader | null {
   const raw = headerText.trim();
   if (!raw) return null;
 
@@ -136,7 +136,7 @@ function parseSectionHeader(headerText: string): SectionHeader | null {
  * 2. Fixing split justice names (e.g., "B ARRETT" → "BARRETT")
  * 3. Handling "CHIEF" splits (e.g., "C HIEF" → "CHIEF")
  */
-function fixSmallCaps(text: string): string {
+export function fixSmallCaps(text: string): string {
   let result = text;
 
   // Fix "J USTICE" → "JUSTICE" and "C HIEF" → "CHIEF"
@@ -184,7 +184,7 @@ function fixSmallCaps(text: string): string {
  * a full word starting lowercase — but those words don't have spaces
  * around the hyphen in the PDF text).
  */
-function dehyphenate(text: string): string {
+export function dehyphenate(text: string): string {
   // Fix footnote-interrupted hyphenations with {{fn:N}} markers:
   // "find - {{fn:2}} ings" → "findings{{fn:2}}" (rejoin word, move marker to end)
   let result = text.replace(/(\w+)\s*-\s+(\{\{fn:\d+\}\})\s+([a-z]\w*)/g, (_, before, marker, after) => {
@@ -202,7 +202,7 @@ function dehyphenate(text: string): string {
   return result;
 }
 
-function buildParagraphs(text: string): Paragraph[] {
+export function buildParagraphs(text: string): Paragraph[] {
   const paragraphs: Paragraph[] = [];
   const rawParagraphs = text.split(/\n{2,}/);
 
@@ -263,7 +263,7 @@ function buildParagraphs(text: string): Paragraph[] {
  *   "CERTIORARI TO ...", "No. 24–568. Argued ... — Decided ..."]
  * Any trailing body text after the date is returned separately as bodyRest.
  */
-function splitSCOTUSHeader(text: string): { bpParts: string[]; bodyRest: string } {
+export function splitSCOTUSHeader(text: string): { bpParts: string[]; bodyRest: string } {
   // First, split off trailing body text after "Decided <date>"
   let headerText = text;
   let bodyRest = '';
@@ -315,7 +315,7 @@ function splitSCOTUSHeader(text: string): { bpParts: string[]; bodyRest: string 
  * Boilerplate includes the SCOTUS header, case caption, cert details, and
  * the justice delivery/joinder line. Stops at the first non-matching paragraph.
  */
-function tagBoilerplate(paragraphs: Paragraph[]): Paragraph[] {
+export function tagBoilerplate(paragraphs: Paragraph[]): Paragraph[] {
   for (let i = 0; i < paragraphs.length; i++) {
     const text = paragraphs[i].text;
 
@@ -853,7 +853,7 @@ async function extractCaseTitleFromPage1(doc: any): Promise<string> {
  * Fallback case title extraction from body text.
  * Looks for "X v. Y" pattern in the first few lines.
  */
-function extractCaseTitleFromText(text: string): string {
+export function extractCaseTitleFromText(text: string): string {
   const lines = text.split('\n').filter(l => l.trim());
   for (const line of lines.slice(0, 20)) {
     const trimmed = line.trim();
@@ -872,12 +872,12 @@ function extractCaseTitleFromText(text: string): string {
   return 'Unknown Case';
 }
 
-function extractDocketNumber(text: string): string {
+export function extractDocketNumber(text: string): string {
   const match = text.match(/No\.\s*([\d\-\u2013]+)/);
   return match ? match[1].replace('\u2013', '-') : '';
 }
 
-function extractDecidedDate(text: string): string {
+export function extractDecidedDate(text: string): string {
   // "Argued ... — Decided July 1, 2024"
   const decidedMatch = text.match(/Decided\s+(\w+\s+\d+,\s+\d{4})/);
   if (decidedMatch) return decidedMatch[1];

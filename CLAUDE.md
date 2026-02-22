@@ -21,9 +21,9 @@ rm -rf node_modules/.vite && npm run dev
 
 **Deploying**:
 ```bash
-npm run build && npx netlify-cli deploy --prod --no-build
+npm run deploy
 ```
-Note: Use `--no-build` to skip the Netlify CLI's build step (which fails trying to set up Deno for edge functions). We build with `npm run build` first, then deploy the pre-built `dist/` directory. The API fetch URL includes a version cache-buster (`&v=2`) — increment `v` when making breaking API changes to avoid stale browser caches.
+This runs `npm test && npm run build && npx netlify-cli deploy --prod --no-build` — tests must pass before the build starts, and the build must succeed before deploying. Uses `--no-build` to skip the Netlify CLI's build step (which fails trying to set up Deno for edge functions). The API fetch URL includes a version cache-buster (`&v=2`) — increment `v` when making breaking API changes to avoid stale browser caches.
 
 ## Architecture
 
