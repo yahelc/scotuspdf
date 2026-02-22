@@ -208,7 +208,15 @@ function buildParagraphs(text: string): Paragraph[] {
 
   for (const raw of rawParagraphs) {
     let trimmed = raw.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-    if (!trimmed || trimmed.length < 3) continue;
+    if (!trimmed) continue;
+
+    // Preserve section heading markers as their own paragraphs
+    if (/^\{\{h[1-3]:.+\}\}$/.test(trimmed)) {
+      paragraphs.push({ text: trimmed, footnotes: [] });
+      continue;
+    }
+
+    if (trimmed.length < 3) continue;
 
     // Rejoin line-break hyphenations
     trimmed = dehyphenate(trimmed);
@@ -224,11 +232,15 @@ function buildParagraphs(text: string): Paragraph[] {
     // Merge with previous paragraph if this is a continuation:
     // previous paragraph doesn't end with sentence-ending punctuation,
     // and this one starts with a lowercase letter.
+    // Never merge into a heading marker.
+    const prevText = paragraphs.length > 0 ? paragraphs[paragraphs.length - 1].text : '';
+    const prevIsHeading = /^\{\{h[1-3]:/.test(prevText);
     if (
       paragraphs.length > 0 &&
+      !prevIsHeading &&
       trimmed.length > 0 &&
       /^[a-z]/.test(trimmed) &&
-      !/[.!?;:'")\u201d]\s*$/.test(paragraphs[paragraphs.length - 1].text)
+      !/[.!?;:'")\u201d]\s*$/.test(prevText)
     ) {
       // Re-run dehyphenate on the junction in case a hyphenated word was split
       // across the paragraph boundary (e.g., "Am -" + "bassadors")
@@ -453,10 +465,37 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
     const bodyEnd = separatorIdx >= 0 ? separatorIdx : textLines.length;
     for (let li = 0; li < bodyEnd; li++) {
       const line = textLines[li];
+      const trimmed = line.text.trim();
 
-      // Detect paragraph breaks via indentation.
+      // Detect centered section headings (Roman numerals, capital letters, digits).
+      // These appear on their own centered lines — significantly right of normal indent.
       const indent = line.startX - bodyLeftMargin;
       const isBodyFont = Math.abs(line.avgFontSize - bodyFS) < 1.5;
+      const isCentered = bodyLeftMargin > 0 && indent > 50 && isBodyFont;
+
+      if (isCentered && /^(I{1,4}V?|VI{0,3}|IX|X{0,3})$/.test(trimmed)) {
+        // Roman numeral heading (level 1): I, II, III, IV, V, VI, VII, VIII, IX, X
+        bodyLines.push('');
+        bodyLines.push(`{{h1:${trimmed}}}`);
+        bodyLines.push('');
+        continue;
+      }
+      if (isCentered && /^[A-Z]$/.test(trimmed)) {
+        // Capital letter heading (level 2): A, B, C, D
+        bodyLines.push('');
+        bodyLines.push(`{{h2:${trimmed}}}`);
+        bodyLines.push('');
+        continue;
+      }
+      if (isCentered && /^\d{1,2}$/.test(trimmed)) {
+        // Numeric heading (level 3): 1, 2, 3
+        bodyLines.push('');
+        bodyLines.push(`{{h3:${trimmed}}}`);
+        bodyLines.push('');
+        continue;
+      }
+
+      // Detect paragraph breaks via indentation.
       const isParagraphIndent = bodyLeftMargin > 0 && indent > 5 && indent < 50 && isBodyFont;
       if (isParagraphIndent && bodyLines.length > 0) {
         bodyLines.push(''); // blank line = paragraph break

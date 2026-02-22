@@ -255,19 +255,27 @@
         <h2 class="chapter-heading">{chapter.title}</h2>
 
         {#each chapter.paragraphs as para}
-          <p class="paragraph">
-            {#each parseSegments(para.text) as seg}
-              {#if seg.type === 'fn'}
-                <button
-                  class="fn-ref"
-                  id="{chapter.id}-ref-{seg.value}"
-                  onclick={(e) => showFootnote(parseInt(seg.value), chapter.footnotes, e)}
-                >{seg.value}</button>
-              {:else}
-                {seg.value}
-              {/if}
-            {/each}
-          </p>
+          {#if para.text.startsWith('{{h1:')}
+            <div class="section-heading h1">{para.text.slice(5, -2)}</div>
+          {:else if para.text.startsWith('{{h2:')}
+            <div class="section-heading h2">{para.text.slice(5, -2)}</div>
+          {:else if para.text.startsWith('{{h3:')}
+            <div class="section-heading h3">{para.text.slice(5, -2)}</div>
+          {:else}
+            <p class="paragraph">
+              {#each parseSegments(para.text) as seg}
+                {#if seg.type === 'fn'}
+                  <button
+                    class="fn-ref"
+                    id="{chapter.id}-ref-{seg.value}"
+                    onclick={(e) => showFootnote(parseInt(seg.value), chapter.footnotes, e)}
+                  >{seg.value}</button>
+                {:else}
+                  {seg.value}
+                {/if}
+              {/each}
+            </p>
+          {/if}
         {/each}
 
         {#if chapter.footnotes && chapter.footnotes.length > 0}
@@ -466,6 +474,25 @@
     margin-bottom: 1rem;
     padding-top: 1rem;
     border-top: 1px solid var(--border);
+  }
+
+  .section-heading {
+    text-align: center;
+    font-weight: 700;
+    font-family: var(--font-body);
+    margin: 1.5em 0 0.5em;
+  }
+
+  .section-heading.h1 {
+    font-size: 1.15em;
+  }
+
+  .section-heading.h2 {
+    font-size: 1.05em;
+  }
+
+  .section-heading.h3 {
+    font-size: 1em;
   }
 
   .paragraph {
