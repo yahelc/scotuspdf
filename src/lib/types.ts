@@ -13,6 +13,7 @@ export interface Chapter {
   title: string;
   author: string | null;
   paragraphs: Paragraph[];
+  footnotes: Footnote[];
 }
 
 export interface ParsedOpinion {

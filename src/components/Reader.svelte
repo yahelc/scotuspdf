@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { ParsedOpinion, Chapter, Footnote } from '../lib/types';
+  import type { ParsedOpinion, Footnote } from '../lib/types';
   import { loadPreferences, savePreferences, loadPosition, savePosition } from '../lib/preferences';
-  import type { Preferences, ReadingPosition } from '../lib/preferences';
+  import type { Preferences } from '../lib/preferences';
 
   interface Props {
     pdfUrl: string;
@@ -16,9 +16,9 @@
   let prefs: Preferences = $state(loadPreferences());
   let currentChapterId = $state('');
   let showChapterNav = $state(false);
-  let activeFootnote: Footnote | null = $state(null);
-  let footnotePosX = $state(0);
-  let footnotePosY = $state(0);
+
+  // Footnote popover state
+  let activeFootnote: { id: number; text: string; top: number } | null = $state(null);
 
   let contentEl: HTMLElement | undefined = $state();
 
@@ -36,7 +36,7 @@
     loading = true;
     error = null;
 
-    fetch(`/api/parse?url=${encodeURIComponent(pdfUrl)}&v=2`)
+    fetch(`/api/parse?url=${encodeURIComponent(pdfUrl)}&v=3`)
       .then((r) => {
         if (!r.ok) return r.json().then((e: any) => Promise.reject(e.error || 'Parse failed'));
         return r.json();
@@ -107,30 +107,9 @@
     });
   }
 
-  function showFootnote(fn: Footnote, event: MouseEvent) {
-    if (activeFootnote?.id === fn.id) {
-      activeFootnote = null;
-      return;
-    }
-    activeFootnote = fn;
-    const target = event.target as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    footnotePosX = rect.left;
-    footnotePosY = rect.bottom + 8;
-  }
-
-  function dismissFootnote() {
-    activeFootnote = null;
-  }
-
   function updateFontSize(e: Event) {
     const target = e.target as HTMLInputElement;
     prefs.fontSize = parseInt(target.value);
-    savePreferences(prefs);
-  }
-
-  function toggleViewMode() {
-    prefs.viewMode = prefs.viewMode === 'scroll' ? 'paged' : 'scroll';
     savePreferences(prefs);
   }
 
@@ -138,6 +117,48 @@
     if (!opinion) return '';
     const ch = opinion.chapters.find((c) => c.id === currentChapterId);
     return ch ? ch.title : '';
+  }
+
+  /** Split paragraph text into segments of plain text and footnote references */
+  function parseSegments(text: string): { type: 'text' | 'fn'; value: string }[] {
+    const segments: { type: 'text' | 'fn'; value: string }[] = [];
+    const regex = /\{\{fn:(\d+)\}\}/g;
+    let lastIndex = 0;
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        segments.push({ type: 'text', value: text.slice(lastIndex, match.index) });
+      }
+      segments.push({ type: 'fn', value: match[1] });
+      lastIndex = regex.lastIndex;
+    }
+    if (lastIndex < text.length) {
+      segments.push({ type: 'text', value: text.slice(lastIndex) });
+    }
+    return segments;
+  }
+
+  function showFootnote(fnId: number, chapterFootnotes: Footnote[], event: MouseEvent) {
+    event.stopPropagation();
+    const fn = chapterFootnotes.find((f) => f.id === fnId);
+    if (!fn) return;
+
+    const target = event.target as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const contentRect = contentEl?.getBoundingClientRect();
+    const scrollTop = contentEl?.scrollTop ?? 0;
+    // Position relative to the content container's scroll position
+    const top = rect.bottom - (contentRect?.top ?? 0) + scrollTop + 4;
+    activeFootnote = { id: fn.id, text: fn.text, top };
+  }
+
+  function dismissFootnote() {
+    activeFootnote = null;
+  }
+
+  function scrollToRef(chapterId: string, fnId: number) {
+    const el = document.getElementById(`${chapterId}-ref-${fnId}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 </script>
 
@@ -175,7 +196,7 @@
   <!-- Chapter navigation dropdown -->
   {#if showChapterNav}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="chapter-overlay" onclick={dismissFootnote}>
+    <div class="chapter-overlay" onclick={() => showChapterNav = false}>
       <nav class="chapter-nav">
         {#each opinion.chapters as chapter}
           <button
@@ -213,41 +234,56 @@
       {/if}
     </div>
 
+    <!-- Footnote popover (positioned absolutely within content) -->
+    {#if activeFootnote}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="footnote-popover"
+        style="top: {activeFootnote.top}px"
+        onclick={(e) => e.stopPropagation()}
+      >
+        <div class="footnote-header">
+          <span class="footnote-num">{activeFootnote.id}</span>
+          <button class="footnote-close" onclick={dismissFootnote}>&times;</button>
+        </div>
+        <p>{activeFootnote.text}</p>
+      </div>
+    {/if}
+
     {#each opinion.chapters as chapter}
       <section id={chapter.id} class="chapter">
         <h2 class="chapter-heading">{chapter.title}</h2>
 
         {#each chapter.paragraphs as para}
           <p class="paragraph">
-            {para.text}
-            {#each para.footnotes as fn}
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <sup
-                class="footnote-ref"
-                onclick={(e) => { e.stopPropagation(); showFootnote(fn, e); }}
-              >{fn.id}</sup>
+            {#each parseSegments(para.text) as seg}
+              {#if seg.type === 'fn'}
+                <button
+                  class="fn-ref"
+                  id="{chapter.id}-ref-{seg.value}"
+                  onclick={(e) => showFootnote(parseInt(seg.value), chapter.footnotes, e)}
+                >{seg.value}</button>
+              {:else}
+                {seg.value}
+              {/if}
             {/each}
           </p>
         {/each}
+
+        {#if chapter.footnotes && chapter.footnotes.length > 0}
+          <div class="chapter-footnotes">
+            {#each chapter.footnotes as fn}
+              <div class="chapter-footnote" id="{chapter.id}-fn-{fn.id}">
+                <button class="fn-back" onclick={() => scrollToRef(chapter.id, fn.id)}>{fn.id}</button>
+                <span class="fn-text">{fn.text}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </section>
     {/each}
   </div>
 
-  <!-- Footnote popover -->
-  {#if activeFootnote}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="footnote-popover"
-      style="left: {Math.min(footnotePosX, window.innerWidth - 320)}px; top: {footnotePosY}px"
-      onclick={(e) => e.stopPropagation()}
-    >
-      <div class="footnote-header">
-        <span class="footnote-num">{activeFootnote.id}</span>
-        <button class="footnote-close" onclick={dismissFootnote}>&times;</button>
-      </div>
-      <p>{activeFootnote.text}</p>
-    </div>
-  {/if}
 {/if}
 
 <style>
@@ -392,6 +428,7 @@
     width: 100%;
     font-family: var(--font-body);
     line-height: 1.7;
+    position: relative;
   }
 
   .content.paged {
@@ -441,30 +478,70 @@
     text-indent: 0;
   }
 
-  .footnote-ref {
+  .fn-ref {
+    display: inline;
+    background: none;
+    border: none;
     color: var(--accent);
-    cursor: pointer;
     font-size: 0.75em;
-    padding: 0 2px;
-    font-weight: 600;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0 0.15em;
+    vertical-align: baseline;
+    position: relative;
+    top: -0.4em;
+    line-height: 1;
+    font-family: inherit;
   }
 
-  .footnote-ref:hover {
+  .fn-ref:hover {
+    text-decoration: underline;
+  }
+
+  .chapter-footnotes {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .chapter-footnote {
+    font-size: 0.85em;
+    line-height: 1.5;
+    margin-bottom: 0.75em;
+    text-indent: 0;
+    color: var(--text-secondary);
+  }
+
+  .fn-back {
+    display: inline;
+    background: none;
+    border: none;
+    font-weight: 700;
+    color: var(--accent);
+    margin-right: 0.4em;
+    cursor: pointer;
+    font-size: inherit;
+    font-family: inherit;
+    padding: 0;
+  }
+
+  .fn-back:hover {
     text-decoration: underline;
   }
 
   .footnote-popover {
-    position: fixed;
+    position: absolute;
     z-index: 30;
+    left: 0;
+    right: 0;
     background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    border-top: 2px solid var(--accent);
+    border-bottom: 2px solid var(--accent);
     padding: 0.75rem 1rem;
-    max-width: 320px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    font-size: 0.9em;
+    line-height: 1.6;
     font-family: var(--font-body);
-    font-size: 0.85rem;
-    line-height: 1.5;
   }
 
   .footnote-header {
@@ -477,15 +554,24 @@
   .footnote-num {
     font-weight: 700;
     color: var(--accent);
-    font-size: 0.8rem;
   }
 
   .footnote-close {
     background: none;
     border: none;
-    font-size: 1.25rem;
+    font-size: 1.2rem;
     cursor: pointer;
     color: var(--text-secondary);
     padding: 0 0.25rem;
+    line-height: 1;
+  }
+
+  .footnote-close:hover {
+    color: var(--text);
+  }
+
+  .footnote-popover p {
+    margin: 0;
+    color: var(--text-secondary);
   }
 </style>

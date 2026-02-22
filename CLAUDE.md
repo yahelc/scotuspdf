@@ -19,14 +19,11 @@ npm run preview  # Preview production build locally
 rm -rf node_modules/.vite && npm run dev
 ```
 
-**Deploying** (always purge CDN cache after deploy):
+**Deploying**:
 ```bash
-rm -rf node_modules/.vite && npx netlify-cli deploy --prod --dir=dist
-
-# Purge Netlify CDN cache (required — API responses have long cache headers)
-TOKEN=$(python3 -c "import json; c=json.load(open('$HOME/Library/Preferences/netlify/config.json')); users=c.get('users',{}); uid=list(users.keys())[0]; print(users[uid]['auth']['token'])")
-curl -s -X POST "https://api.netlify.com/api/v1/purge" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"site_id":"751ab2cd-6265-41d6-8d7e-591b870e6d42"}'
+npm run build && npx netlify-cli deploy --prod --no-build
 ```
+Note: Use `--no-build` to skip the Netlify CLI's build step (which fails trying to set up Deno for edge functions). We build with `npm run build` first, then deploy the pre-built `dist/` directory. The API fetch URL includes a version cache-buster (`&v=2`) — increment `v` when making breaking API changes to avoid stale browser caches.
 
 ## Architecture
 
@@ -49,7 +46,7 @@ User → index.astro (paste URL) → /read/:term/:filename
   - `KNOWN_JUSTICES` map used for name normalization
   - **pdfjs-dist serverless fix**: Must pre-load worker onto `globalThis.pdfjsWorker` before importing pdf.mjs, because Web Workers aren't available in Netlify Functions
 
-- **`src/components/Reader.svelte`** — Svelte 5 reader UI with `$state`/`$effect`/`$derived` runes. Chapter navigation, font size slider, footnote popovers, localStorage position persistence.
+- **`src/components/Reader.svelte`** — Svelte 5 reader UI with `$state`/`$effect`/`$derived` runes. Chapter navigation, font size slider, chapter-level footnotes, localStorage position persistence.
 
 - **`src/pages/api/parse.ts`** — Server endpoint that validates URL (must be supremecourt.gov), checks S3 cache, downloads PDF, parses, returns JSON.
 

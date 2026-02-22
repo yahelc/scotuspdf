@@ -185,9 +185,15 @@ function fixSmallCaps(text: string): string {
  * around the hyphen in the PDF text).
  */
 function dehyphenate(text: string): string {
-  // Fix footnote-interrupted hyphenations first (more specific):
+  // Fix footnote-interrupted hyphenations with {{fn:N}} markers:
+  // "find - {{fn:2}} ings" → "findings{{fn:2}}" (rejoin word, move marker to end)
+  let result = text.replace(/(\w+)\s*-\s+(\{\{fn:\d+\}\})\s+([a-z]\w*)/g, (_, before, marker, after) => {
+    return before + after + marker;
+  });
+
+  // Fix footnote-interrupted hyphenations without markers (legacy):
   // "con - 1 solidated" → "consolidated" (footnote number embedded mid-word)
-  let result = text.replace(/(\w)\s*-\s+\d+\s+([a-z])/g, '$1$2');
+  result = result.replace(/(\w)\s*-\s+\d+\s+([a-z])/g, '$1$2');
 
   // Then fix standard line-break hyphenations:
   // "Eco - nomic" or "con- stitution" → "Economic" or "constitution"
@@ -315,11 +321,38 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
     });
     bodyItems.sort((a, b) => b.y - a.y || a.x - b.x);
 
+    // Determine dominant body font size from all body items (needed for superscript detection)
+    const itemFSFreq = new Map<number, number>();
+    for (const item of bodyItems) {
+      const fs = Math.round(item.fontSize);
+      itemFSFreq.set(fs, (itemFSFreq.get(fs) || 0) + 1);
+    }
+    let bodyFS = 0;
+    let maxFreq = 0;
+    for (const [fs, freq] of itemFSFreq) {
+      if (freq > maxFreq) { maxFreq = freq; bodyFS = fs; }
+    }
+
+    // Find the y-position of the footnote separator line (——————) to avoid
+    // marking footnote-section numbers as superscript references.
+    // The separator is a line of em-dashes at a smaller font than body text.
+    let separatorY = -1;
+    for (const item of bodyItems) {
+      if (/^——+$/.test(item.text.trim()) && bodyFS > 0 && item.fontSize < bodyFS - 1) {
+        // In PDF coordinates, y increases upward, and bodyItems are sorted descending by y,
+        // so the separator (lower on page) has a smaller y value.
+        separatorY = item.y;
+        break;
+      }
+    }
+
     // Group into text lines, handling small-cap name rendering.
     // SCOTUS PDFs render names in small caps: the first letter is at body font size
     // and remaining letters are ALL-CAPS at a smaller size (e.g., "J" at 11pt + "USTICE" at 9pt).
     // pdf.js returns these as separate items, so we need to join them without a space.
     // Track x-position of first item on each line to detect paragraph indentation.
+    // Superscript footnote reference numbers (1-2 digits at much smaller font) in the body
+    // area (above separator) are wrapped with {{fn:N}} markers for the frontend.
     const textLines: { text: string; avgFontSize: number; startX: number }[] = [];
     let curText = '';
     let curStartX = 0;
@@ -329,16 +362,31 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
     let fsCount = 0;
 
     for (const item of bodyItems) {
+      const trimmedItem = item.text.trim();
+
+      // Detect superscript footnote reference numbers in body text (above separator only).
+      // These are 1-2 digit numbers at a significantly smaller font than body text.
+      const isAboveSeparator = separatorY < 0 || item.y > separatorY + 2;
+      const isSuperscriptRef = (
+        isAboveSeparator &&
+        /^\d{1,2}$/.test(trimmedItem) &&
+        bodyFS > 0 &&
+        item.fontSize < bodyFS - 2.5
+      );
+
       if (lastY >= 0 && Math.abs(item.y - lastY) > 2) {
         // New line
         if (curText.trim()) textLines.push({ text: curText.trim(), avgFontSize: fsCount > 0 ? fsSum / fsCount : 0, startX: curStartX });
-        curText = item.text;
+        if (isSuperscriptRef) {
+          curText = `{{fn:${trimmedItem}}}`;
+        } else {
+          curText = item.text;
+        }
         curStartX = item.x;
         fsSum = item.fontSize;
         fsCount = 1;
       } else {
         // Same line — check if this is a small-cap continuation
-        const trimmedItem = item.text.trim();
         const isSmallCap = (
           trimmedItem.length > 0 &&
           /^[A-Z]+$/.test(trimmedItem) &&
@@ -347,7 +395,10 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
           /[A-Z]$/.test(curText)
         );
 
-        if (isSmallCap) {
+        if (isSuperscriptRef) {
+          // Footnote reference — append marker without space before it
+          curText += `{{fn:${trimmedItem}}}`;
+        } else if (isSmallCap) {
           // Join without space — small-cap continuation
           curText += trimmedItem;
         } else {
@@ -361,16 +412,6 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
       lastFontSize = item.fontSize;
     }
     if (curText.trim()) textLines.push({ text: curText.trim(), avgFontSize: fsCount > 0 ? fsSum / fsCount : 0, startX: curStartX });
-
-    // Find dominant font size for footnote detection
-    const fsSizes = textLines.map((l) => Math.round(l.avgFontSize));
-    const fsFreq = new Map<number, number>();
-    for (const fs of fsSizes) fsFreq.set(fs, (fsFreq.get(fs) || 0) + 1);
-    let bodyFS = 0;
-    let maxFreq = 0;
-    for (const [fs, freq] of fsFreq) {
-      if (freq > maxFreq) { maxFreq = freq; bodyFS = fs; }
-    }
 
     // Find the dominant left margin for body text lines (most common startX)
     const bodyFontLines = textLines.filter(
@@ -387,48 +428,33 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
       if (freq > maxXFreq) { maxXFreq = freq; bodyLeftMargin = x; }
     }
 
-    // Separate footnotes (smaller font, start with number)
-    // Mark lines that are indented (paragraph starts) with a preceding blank line
+    // Debug footnote detection
+    // Split text lines into body and footnotes.
+    // SCOTUS footnotes appear after a "——————" separator line, in smaller font.
+    // The footnote number appears on its own line (fs ~6pt), followed by
+    // the footnote text on subsequent lines (fs ~9pt, body is ~11pt).
     const bodyLines: string[] = [];
     const footnotes = new Map<number, string>();
-    let inFN = false;
-    let fnId = 0;
-    let fnText = '';
-    let lastFnId = 0;
 
-    for (const line of textLines) {
-      const isSmall = line.avgFontSize > 0 && bodyFS > 0 && line.avgFontSize < bodyFS - 1;
-      const fnMatch = line.text.match(/^(\d{1,2})\s+(.+)/);
-
-      if (fnMatch && isSmall) {
-        const num = parseInt(fnMatch[1]);
-        if (num > 0 && num < 100 && (num === lastFnId + 1 || lastFnId === 0)) {
-          if (fnId > 0) footnotes.set(fnId, fnText.trim());
-          fnId = num;
-          fnText = fnMatch[2];
-          lastFnId = num;
-          inFN = true;
-          continue;
+    // Find the separator line index
+    let separatorIdx = -1;
+    for (let li = 0; li < textLines.length; li++) {
+      if (/^——+$/.test(textLines[li].text.trim())) {
+        // Verify it's in the smaller font region (not body text)
+        const isSmall = textLines[li].avgFontSize > 0 && bodyFS > 0 && textLines[li].avgFontSize < bodyFS - 1;
+        if (isSmall) {
+          separatorIdx = li;
+          break;
         }
       }
+    }
 
-      if (inFN && isSmall) {
-        fnText += ' ' + line.text;
-        continue;
-      }
-
-      if (inFN) {
-        footnotes.set(fnId, fnText.trim());
-        inFN = false;
-        fnId = 0;
-        fnText = '';
-      }
+    // Process body lines (everything before the separator)
+    const bodyEnd = separatorIdx >= 0 ? separatorIdx : textLines.length;
+    for (let li = 0; li < bodyEnd; li++) {
+      const line = textLines[li];
 
       // Detect paragraph breaks via indentation.
-      // SCOTUS body text uses a consistent left margin; new paragraphs are indented
-      // ~9-11pt from that margin. We avoid triggering on centered headers/titles
-      // by requiring the line to be at body font size and the indent to be small
-      // (real paragraph indents are 9-25pt, not 100+pt like centered text).
       const indent = line.startX - bodyLeftMargin;
       const isBodyFont = Math.abs(line.avgFontSize - bodyFS) < 1.5;
       const isParagraphIndent = bodyLeftMargin > 0 && indent > 5 && indent < 50 && isBodyFont;
@@ -438,7 +464,35 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
 
       bodyLines.push(line.text);
     }
-    if (fnId > 0) footnotes.set(fnId, fnText.trim());
+
+    // Process footnotes (everything after the separator)
+    if (separatorIdx >= 0) {
+      let fnId = 0;
+      let fnText = '';
+
+      for (let li = separatorIdx + 1; li < textLines.length; li++) {
+        const line = textLines[li];
+        const trimmed = line.text.trim();
+
+        // Footnote number on its own line (very small font ~6pt, just a digit).
+        // This is the ONLY reliable way to detect a new footnote start in SCOTUS PDFs.
+        // The number appears at a distinctly smaller font than both body (~11pt) and
+        // footnote text (~9pt).
+        if (/^\d{1,2}$/.test(trimmed) && line.avgFontSize < bodyFS - 3) {
+          // Save previous footnote
+          if (fnId > 0) footnotes.set(fnId, fnText.trim());
+          fnId = parseInt(trimmed);
+          fnText = '';
+          continue;
+        }
+
+        // Continuation of current footnote (skip separator lines)
+        if (fnId > 0 && !/^——+$/.test(trimmed)) {
+          fnText += ' ' + trimmed;
+        }
+      }
+      if (fnId > 0) footnotes.set(fnId, fnText.trim());
+    }
 
     pages.push({ sectionHeader, bodyLines, footnotes });
   }
@@ -495,12 +549,22 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
   }
 
   // Build final chapters
-  const chapters: Chapter[] = chapterDatas.map((cd) => ({
-    id: cd.header.id,
-    title: cd.header.title,
-    author: cd.header.author,
-    paragraphs: buildParagraphs(cd.text),
-  }));
+  const chapters: Chapter[] = chapterDatas.map((cd) => {
+    // Convert footnote map to sorted array
+    const footnotes: { id: number; text: string }[] = [];
+    for (const [id, text] of cd.footnotes) {
+      footnotes.push({ id, text: dehyphenate(text) });
+    }
+    footnotes.sort((a, b) => a.id - b.id);
+
+    return {
+      id: cd.header.id,
+      title: cd.header.title,
+      author: cd.header.author,
+      paragraphs: buildParagraphs(cd.text),
+      footnotes,
+    };
+  });
 
   // If no chapters, single opinion
   if (chapters.length === 0) {
@@ -510,6 +574,7 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
       title: 'Opinion',
       author: null,
       paragraphs: buildParagraphs(allText),
+      footnotes: [],
     });
   }
 
