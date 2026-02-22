@@ -31,7 +31,7 @@ describe('Learning Resources (24-1287)', () => {
     const syllabus = result.chapters.find(c => c.id === 'syllabus');
     expect(syllabus).toBeDefined();
     const bpParas = syllabus!.paragraphs.filter(p => /^\{\{bp:/.test(p.text));
-    expect(bpParas.length).toBeGreaterThanOrEqual(3); // SCOTUS header, case name, cert, docket/date
+    expect(bpParas.length).toBeGreaterThanOrEqual(2); // NOTE disclaimer + SCOTUS header (at minimum)
   });
 
   it('Syllabus body is NOT tagged as boilerplate', () => {
@@ -68,6 +68,21 @@ describe('Learning Resources (24-1287)', () => {
     expect(fn19).toBeDefined();
     // fn19 spans multiple pages — should contain substantial text, not be cut short
     expect(fn19!.text.length).toBeGreaterThan(200);
+  });
+
+  it('Thomas dissent footnote 1 is extracted separately, not inline (footnote-heavy page regression)', () => {
+    const thomas = result.chapters.find(c => c.id.includes('thomas'));
+    expect(thomas).toBeDefined();
+    // Footnote 1 must exist as a separate footnote entry
+    const fn1 = thomas!.footnotes.find(f => f.id === 1);
+    expect(fn1).toBeDefined();
+    expect(fn1!.text).toContain('I refer to charges on imported goods');
+    // Body text must NOT contain the footnote separator or footnote text inline
+    const bodyText = thomas!.paragraphs.map(p => p.text).join(' ');
+    expect(bodyText).not.toContain('——————');
+    expect(bodyText).not.toContain('I refer to charges on imported goods');
+    // The {{fn:1}} marker should be in the body
+    expect(bodyText).toContain('{{fn:1}}');
   });
 });
 

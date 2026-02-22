@@ -475,16 +475,24 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
       return dy !== 0 ? dy : a.x - b.x;
     });
 
-    // Determine dominant body font size from all body items (needed for superscript detection)
+    // Determine dominant body font size from all body items (needed for superscript detection).
+    // Use the largest font size with significant frequency (≥5 items), not the most frequent,
+    // because on footnote-heavy pages the smaller footnote font can outnumber body text.
     const itemFSFreq = new Map<number, number>();
     for (const item of bodyItems) {
       const fs = Math.round(item.fontSize);
       itemFSFreq.set(fs, (itemFSFreq.get(fs) || 0) + 1);
     }
     let bodyFS = 0;
-    let maxFreq = 0;
     for (const [fs, freq] of itemFSFreq) {
-      if (freq > maxFreq) { maxFreq = freq; bodyFS = fs; }
+      if (freq >= 5 && fs > bodyFS) { bodyFS = fs; }
+    }
+    // Fallback: if no font has ≥5 items, use the most frequent
+    if (bodyFS === 0) {
+      let maxFreq = 0;
+      for (const [fs, freq] of itemFSFreq) {
+        if (freq > maxFreq) { maxFreq = freq; bodyFS = fs; }
+      }
     }
 
     // Find the y-position of the footnote separator line (——————) to avoid
