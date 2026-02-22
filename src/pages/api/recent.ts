@@ -6,6 +6,12 @@ export const prerender = false;
 
 const SCOTUS_BASE = 'https://www.supremecourt.gov';
 
+function getCurrentTerm(): string {
+  const now = new Date();
+  const year = now.getMonth() >= 9 ? now.getFullYear() : now.getFullYear() - 1;
+  return String(year).slice(-2);
+}
+
 function parseOpinionRows(html: string): RecentOpinion[] {
   const opinions: RecentOpinion[] = [];
 
@@ -76,7 +82,8 @@ export const GET: APIRoute = async () => {
   }
 
   try {
-    const resp = await fetch(`${SCOTUS_BASE}/opinions/slipopinion/25`);
+    const term = getCurrentTerm();
+    const resp = await fetch(`${SCOTUS_BASE}/opinions/slipopinion/${term}`);
     if (!resp.ok) {
       return new Response(JSON.stringify({ error: 'Failed to fetch opinions page' }), {
         status: 502,

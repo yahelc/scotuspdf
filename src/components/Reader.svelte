@@ -79,17 +79,34 @@
           const saved = loadPosition(caseId);
           if (saved?.chapterId) {
             currentChapterId = saved.chapterId;
-            // Restore scroll after render
-            requestAnimationFrame(() => {
-              if (prefs.viewMode === 'paged' && saved.page > 0) {
-                setTimeout(() => goToPage(saved.page), 150);
-              } else if (saved.scrollPercent > 0 && contentEl) {
-                contentEl.scrollTop = saved.scrollPercent * (contentEl.scrollHeight - contentEl.clientHeight);
-              } else {
+            // Restore scroll after render — poll until DOM is ready
+            const restorePosition = () => {
+              let attempts = 0;
+              const maxAttempts = 50; // ~2.5s max
+              const poll = () => {
+                attempts++;
                 const el = document.getElementById(saved.chapterId);
-                if (el) el.scrollIntoView();
-              }
-            });
+                if (!el && attempts < maxAttempts) {
+                  setTimeout(poll, 50);
+                  return;
+                }
+                if (!el) return;
+                if (prefs.viewMode === 'paged' && saved.page > 0) {
+                  // Wait for pageWidth to be computed
+                  if (pageWidth <= 0 && attempts < maxAttempts) {
+                    setTimeout(poll, 50);
+                    return;
+                  }
+                  goToPage(saved.page);
+                } else if (saved.scrollPercent > 0 && contentEl) {
+                  contentEl.scrollTop = saved.scrollPercent * (contentEl.scrollHeight - contentEl.clientHeight);
+                } else {
+                  el.scrollIntoView();
+                }
+              };
+              requestAnimationFrame(poll);
+            };
+            restorePosition();
           } else {
             currentChapterId = data.chapters[0].id;
           }
@@ -380,7 +397,7 @@
     const target = event.target as HTMLElement;
     const rect = target.getBoundingClientRect();
     const contentRect = contentEl?.getBoundingClientRect();
-    const scrollTop = contentEl?.scrollTop ?? 0;
+    const scrollTop = prefs.viewMode === 'paged' ? 0 : (contentEl?.scrollTop ?? 0);
     // Position relative to the content container's scroll position
     const top = rect.bottom - (contentRect?.top ?? 0) + scrollTop + 4;
     activeFootnote = { id: fn.id, text: fn.text, top };
