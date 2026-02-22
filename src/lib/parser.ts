@@ -256,6 +256,61 @@ function buildParagraphs(text: string): Paragraph[] {
 }
 
 /**
+ * Split a merged SCOTUS header blob into meaningful segments.
+ * Input like: "SUPREME COURT OF THE UNITED STATES Syllabus BOST ET AL . v . ILLINOIS ...
+ *   CERTIORARI TO ... No. 24–568. Argued October 8, 2025—Decided January 14, 2026"
+ * Returns: ["SUPREME COURT OF THE UNITED STATES", "BOST ET AL. v. ILLINOIS ...",
+ *   "CERTIORARI TO ...", "No. 24–568. Argued ... — Decided ..."]
+ * Any trailing body text after the date is returned separately as bodyRest.
+ */
+function splitSCOTUSHeader(text: string): { bpParts: string[]; bodyRest: string } {
+  // First, split off trailing body text after "Decided <date>"
+  let headerText = text;
+  let bodyRest = '';
+  const decidedMatch = text.match(/Decided\s+\w+\s+\d+,\s+\d{4}\s*/);
+  if (decidedMatch && decidedMatch.index !== undefined) {
+    const cutIdx = decidedMatch.index + decidedMatch[0].length;
+    headerText = text.slice(0, cutIdx).trim();
+    bodyRest = text.slice(cutIdx).trim();
+  }
+
+  let remaining = headerText;
+  const segments: string[] = [];
+
+  // Extract SUPREME COURT header first
+  const scotusEnd = remaining.indexOf('SUPREME COURT OF THE UNITED STATES') + 'SUPREME COURT OF THE UNITED STATES'.length;
+  if (scotusEnd > 0) {
+    segments.push(remaining.slice(0, scotusEnd).trim());
+    remaining = remaining.slice(scotusEnd).trim();
+  }
+
+  // Remove "Syllabus" label if present (it's redundant with chapter title)
+  remaining = remaining.replace(/^Syllabus\s*/, '');
+
+  // Split at "CERTIORARI" or "ON WRIT"
+  const certMatch = remaining.match(/\s+(CERTIORARI\b|ON WRIT OF\b)/);
+  if (certMatch && certMatch.index !== undefined) {
+    const before = remaining.slice(0, certMatch.index).trim();
+    const after = remaining.slice(certMatch.index).trim();
+    if (before) segments.push(before);
+    remaining = after;
+  }
+
+  // Split at "No." / "Nos."
+  const noMatch = remaining.match(/\s+(No(?:s)?\.\s+\d)/);
+  if (noMatch && noMatch.index !== undefined) {
+    const before = remaining.slice(0, noMatch.index).trim();
+    const after = remaining.slice(noMatch.index).trim();
+    if (before) segments.push(before);
+    if (after) segments.push(after);
+  } else if (remaining) {
+    segments.push(remaining);
+  }
+
+  return { bpParts: segments, bodyRest: bodyRest };
+}
+
+/**
  * Tag leading boilerplate paragraphs in a chapter with {{bp:...}} markers.
  * Boilerplate includes the SCOTUS header, case caption, cert details, and
  * the justice delivery/joinder line. Stops at the first non-matching paragraph.
@@ -294,20 +349,16 @@ function tagBoilerplate(paragraphs: Paragraph[]): Paragraph[] {
       continue;
     }
     if (/^SUPREME COURT OF THE UNITED STATES/.test(text)) {
-      // In the Syllabus, buildParagraphs may merge the SCOTUS header + case caption
-      // + syllabus body into one big paragraph. Split at "Decided <date>" if present.
-      const decidedMatch = text.match(/Decided\s+\w+\s+\d+,\s+\d{4}\s*/);
-      if (decidedMatch && decidedMatch.index !== undefined) {
-        const cutIdx = decidedMatch.index + decidedMatch[0].length;
-        const header = text.slice(0, cutIdx).trim();
-        const rest = text.slice(cutIdx).trim();
-        paragraphs[i].text = `{{bp:${header}}}`;
-        if (rest) {
-          paragraphs.splice(i + 1, 0, { text: rest, footnotes: [] });
-        }
-      } else {
-        paragraphs[i].text = `{{bp:${text}}}`;
+      // In the Syllabus, buildParagraphs merges the SCOTUS header + case caption
+      // into one big paragraph. Split at meaningful boundaries.
+      const { bpParts, bodyRest } = splitSCOTUSHeader(text);
+      const newParas: Paragraph[] = bpParts.map(p => ({ text: `{{bp:${p}}}`, footnotes: [] as Footnote[] }));
+      if (bodyRest) {
+        newParas.push({ text: bodyRest, footnotes: [] as Footnote[] });
       }
+      paragraphs.splice(i, 1, ...newParas);
+      // Skip past the newly inserted bp paragraphs (not the body rest)
+      i += bpParts.length - 1;
       continue;
     }
     if (/PETITIONER|ON WRIT OF CERTIORARI/.test(text)) {
@@ -703,10 +754,15 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
   }
 
   // Extract metadata from page 1 items
-  const caseTitle = await extractCaseTitleFromPage1(doc);
+  let caseTitle = await extractCaseTitleFromPage1(doc);
   const firstPagesText = pages.slice(0, 3).map((p) => p.bodyLines.join('\n')).join('\n');
   const docketNumber = extractDocketNumber(firstPagesText);
   const decidedDate = extractDecidedDate(firstPagesText);
+
+  // Fallback: extract case title from body text if page 1 method failed
+  if (caseTitle === 'Unknown Case') {
+    caseTitle = extractCaseTitleFromText(firstPagesText);
+  }
 
   return { caseTitle, docketNumber, decidedDate, sourceUrl, chapters };
 }
@@ -786,6 +842,29 @@ async function extractCaseTitleFromPage1(doc: any): Promise<string> {
   } catch {
     return 'Unknown Case';
   }
+}
+
+/**
+ * Fallback case title extraction from body text.
+ * Looks for "X v. Y" pattern in the first few lines.
+ */
+function extractCaseTitleFromText(text: string): string {
+  const lines = text.split('\n').filter(l => l.trim());
+  for (const line of lines.slice(0, 20)) {
+    const trimmed = line.trim();
+    // Match "NAME v. NAME" or "NAME v . NAME" patterns (case caption style)
+    const match = trimmed.match(/^(.+?)\s+v\s*\.\s+(.+?)(?:\s{2,}|$)/);
+    if (match) {
+      let title = (match[1] + ' v. ' + match[2])
+        .replace(/\s+/g, ' ')
+        .replace(/\bET AL\b\.?\s*\.?/gi, 'et al.')
+        .replace(/\.\s*\./g, '.')
+        .trim()
+        .replace(/[,\s]+$/, '');
+      return title || 'Unknown Case';
+    }
+  }
+  return 'Unknown Case';
 }
 
 function extractDocketNumber(text: string): string {

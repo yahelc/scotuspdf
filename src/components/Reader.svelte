@@ -373,9 +373,7 @@
     </div>
     <div class="toolbar-controls">
       <button class="settings-btn" onclick={() => showSettings = !showSettings} aria-label="Settings">
-        <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
-          <path d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.062 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"/>
-        </svg>
+        <span class="settings-icon">Aa</span>
       </button>
     </div>
   </header>
@@ -934,16 +932,25 @@
 
   .settings-btn {
     background: none;
-    border: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
     color: var(--text-secondary);
     cursor: pointer;
-    padding: 0.25rem;
+    padding: 0.15rem 0.4rem;
     display: flex;
     align-items: center;
   }
 
   .settings-btn:hover {
     color: var(--text);
+    background: var(--bg);
+  }
+
+  .settings-icon {
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1;
   }
 
   .settings-overlay {
