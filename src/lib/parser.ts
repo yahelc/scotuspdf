@@ -467,7 +467,12 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
       }
       return true;
     });
-    bodyItems.sort((a, b) => b.y - a.y || a.x - b.x);
+    // Sort by y descending then x ascending. Round y to avoid sub-pixel jitter
+    // (e.g., 333.300 vs 333.299) that can reorder items on the same visual line.
+    bodyItems.sort((a, b) => {
+      const dy = Math.round(b.y) - Math.round(a.y);
+      return dy !== 0 ? dy : a.x - b.x;
+    });
 
     // Determine dominant body font size from all body items (needed for superscript detection)
     const itemFSFreq = new Map<number, number>();
