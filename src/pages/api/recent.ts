@@ -9,26 +9,34 @@ const SCOTUS_BASE = 'https://www.supremecourt.gov';
 function parseOpinionRows(html: string): RecentOpinion[] {
   const opinions: RecentOpinion[] = [];
 
-  // Match table rows containing opinion data
-  // SCOTUS slip opinion pages use a table with columns: Date, Docket, Name, Author, PDF links
-  const rowRegex = /<tr[^>]*>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi;
+  // Match entire table rows, then extract cells
+  // SCOTUS slip opinion pages: columns are R#, Date, Docket, Name, J., Citation
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
 
   let match;
   while ((match = rowRegex.exec(html)) !== null) {
-    const dateCell = match[1].trim();
-    const docketCell = match[2].trim();
-    const nameCell = match[3].trim();
+    const rowHtml = match[1];
+    const cells: string[] = [];
+    const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    let cellMatch;
+    while ((cellMatch = cellRegex.exec(rowHtml)) !== null) {
+      cells.push(cellMatch[1].trim());
+    }
+    if (cells.length < 4) continue;
+    const dateCell = cells[1];
+    const docketCell = cells[2];
+    const nameCell = cells[3];
 
     // Extract date
     const dateMatch = dateCell.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
     if (!dateMatch) continue;
 
     // Extract docket number
-    const docketMatch = docketCell.match(/([\d\-]+)/);
+    const docketMatch = docketCell.match(/([\dA-Z\-]+)/);
     if (!docketMatch) continue;
 
     // Extract case name and PDF link
-    const linkMatch = nameCell.match(/href="([^"]*\.pdf)"/i);
+    const linkMatch = nameCell.match(/href=['"](.*?\.pdf)['"]/i);
     const titleMatch = nameCell.match(/>([^<]+)</);
     if (!linkMatch || !titleMatch) continue;
 
@@ -68,7 +76,7 @@ export const GET: APIRoute = async () => {
   }
 
   try {
-    const resp = await fetch(`${SCOTUS_BASE}/opinions/slipopinion/24`);
+    const resp = await fetch(`${SCOTUS_BASE}/opinions/slipopinion/25`);
     if (!resp.ok) {
       return new Response(JSON.stringify({ error: 'Failed to fetch opinions page' }), {
         status: 502,
