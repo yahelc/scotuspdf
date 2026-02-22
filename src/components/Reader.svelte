@@ -396,10 +396,8 @@
 
     const target = event.target as HTMLElement;
     const rect = target.getBoundingClientRect();
-    const contentRect = contentEl?.getBoundingClientRect();
-    const scrollTop = prefs.viewMode === 'paged' ? 0 : (contentEl?.scrollTop ?? 0);
-    // Position relative to the content container's scroll position
-    const top = rect.bottom - (contentRect?.top ?? 0) + scrollTop + 4;
+    // Use viewport-relative fixed positioning
+    const top = rect.bottom + 4;
     activeFootnote = { id: fn.id, text: fn.text, top };
   }
 
@@ -542,22 +540,6 @@
       {/if}
     </div>
 
-    <!-- Footnote popover (positioned absolutely within content) -->
-    {#if activeFootnote}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div
-        class="footnote-popover"
-        style="top: {activeFootnote.top}px"
-        onclick={(e) => e.stopPropagation()}
-      >
-        <div class="footnote-header">
-          <span class="footnote-num">{activeFootnote.id}</span>
-          <button class="footnote-close" onclick={dismissFootnote}>&times;</button>
-        </div>
-        <p>{activeFootnote.text}</p>
-      </div>
-    {/if}
-
     {#each opinion.chapters as chapter}
       <section id={chapter.id} class="chapter">
         <h2 class="chapter-heading">{chapter.title}</h2>
@@ -611,6 +593,22 @@
       </section>
     {/each}
   </div>
+
+  <!-- Footnote popover (fixed position, outside column layout) -->
+  {#if activeFootnote}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="footnote-popover"
+      style="top: {activeFootnote.top}px"
+      onclick={(e) => e.stopPropagation()}
+    >
+      <div class="footnote-header">
+        <span class="footnote-num">{activeFootnote.id}</span>
+        <button class="footnote-close" onclick={dismissFootnote}>&times;</button>
+      </div>
+      <p>{activeFootnote.text}</p>
+    </div>
+  {/if}
   </div>
 
   <!-- Progress bar (scroll mode) / Page indicator (paged mode) -->
@@ -870,8 +868,7 @@
   }
 
   .content.paged .chapter,
-  .content.paged .case-header,
-  .content.paged .footnote-popover {
+  .content.paged .case-header {
     padding-left: 1rem;
     padding-right: 1rem;
     max-width: 680px;
@@ -1016,7 +1013,7 @@
   }
 
   .footnote-popover {
-    position: absolute;
+    position: fixed;
     z-index: 30;
     left: 0;
     right: 0;
@@ -1028,6 +1025,8 @@
     font-size: 0.9em;
     line-height: 1.6;
     font-family: var(--font-body);
+    max-width: 680px;
+    margin: 0 auto;
   }
 
   .footnote-header {
