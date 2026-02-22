@@ -98,9 +98,16 @@
 
   function jumpToChapter(id: string) {
     currentChapterId = id;
+    sectionBreadcrumb = '';
     showChapterNav = false;
     const el = document.getElementById(id);
-    if (el) el.scrollIntoView({ behavior: 'smooth' });
+    if (el && prefs.viewMode === 'paged' && pageWidth > 0) {
+      // In paged mode, calculate which page the chapter starts on
+      const page = Math.round(el.offsetLeft / pageWidth);
+      goToPage(page);
+    } else if (el) {
+      el.scrollIntoView({ behavior: 'smooth' });
+    }
     updateHash(id);
   }
 
@@ -250,7 +257,10 @@
 
   function updateBreadcrumb() {
     if (!contentEl) return;
-    const headings = contentEl.querySelectorAll('.section-heading');
+    // Scope heading scan to the current chapter only
+    const chapterEl = document.getElementById(currentChapterId);
+    if (!chapterEl) { sectionBreadcrumb = ''; return; }
+    const headings = chapterEl.querySelectorAll('.section-heading');
     let h1 = '', h2 = '', h3 = '';
     for (const el of headings) {
       const rect = el.getBoundingClientRect();
