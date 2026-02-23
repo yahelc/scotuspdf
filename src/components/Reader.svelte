@@ -244,11 +244,11 @@
     const rect = contentEl.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const w = rect.width;
-    if (x < w * 0.3) {
+    if (x < w * 0.25) {
       flashPrev = true;
       setTimeout(() => flashPrev = false, 50);
       goToPage(currentPage - 1);
-    } else if (x > w * 0.7) {
+    } else if (x > w * 0.4) {
       flashNext = true;
       setTimeout(() => flashNext = false, 50);
       goToPage(currentPage + 1);
@@ -884,37 +884,31 @@
   .content-wrapper.paged::after {
     content: '';
     position: absolute;
-    top: 50%;
+    top: 0;
+    bottom: 0;
+    width: 3px;
     pointer-events: none;
     z-index: 1;
-    opacity: 0.08;
-    width: 0;
-    height: 0;
-    border-top: 28px solid transparent;
-    border-bottom: 28px solid transparent;
+    opacity: 0;
+    background: var(--text);
+    transition: opacity 0.05s ease-out;
   }
 
   .content-wrapper.paged::before {
-    left: 4px;
-    border-right: 6px solid var(--text);
-    transform: translateY(-50%);
-    transition: opacity 0.05s ease-out;
+    left: 0;
   }
 
   .content-wrapper.paged::after {
-    right: 4px;
-    border-left: 6px solid var(--text);
-    transform: translateY(-50%);
-    transition: opacity 0.05s ease-out;
+    right: 0;
   }
 
   .content-wrapper.flash-prev::before {
-    opacity: 0.35;
+    opacity: 0.2;
     transition: none;
   }
 
   .content-wrapper.flash-next::after {
-    opacity: 0.35;
+    opacity: 0.2;
     transition: none;
   }
 
