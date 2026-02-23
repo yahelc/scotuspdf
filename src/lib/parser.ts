@@ -895,11 +895,23 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
     }
     footnotes.sort((a, b) => a.id - b.id);
 
+    const paragraphs = tagBoilerplate(buildParagraphs(cd.text));
+    let { title, author } = cd.header;
+
+    // For "Opinion of the Court" chapters, extract the author from the
+    // JUSTICE delivery line (e.g. "JUSTICE THOMAS delivered the opinion...")
+    if (cd.header.id === 'opinion-majority' && !author) {
+      author = extractAuthorFromDeliveryLine(paragraphs);
+    }
+    if (cd.header.id === 'opinion-majority' && author) {
+      title = `${author}, majority`;
+    }
+
     return {
       id: cd.header.id,
-      title: cd.header.title,
-      author: cd.header.author,
-      paragraphs: tagBoilerplate(buildParagraphs(cd.text)),
+      title,
+      author,
+      paragraphs,
       footnotes,
     };
   });
@@ -928,6 +940,24 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
   }
 
   return { caseTitle, docketNumber, decidedDate, sourceUrl, chapters };
+}
+
+function extractAuthorFromDeliveryLine(paragraphs: { text: string }[]): string | null {
+  for (const p of paragraphs) {
+    const m = p.text.match(/^\{\{bpj:(.+)\}\}$/);
+    if (!m) continue;
+    const line = m[1];
+    // "CHIEF JUSTICE ROBERTS delivered..." or "JUSTICE THOMAS delivered..."
+    const justiceMatch = line.match(/(?:CHIEF\s+)?JUSTICE\s+([A-Z]{2,})\b/);
+    if (justiceMatch && KNOWN_JUSTICES[justiceMatch[1]]) {
+      return KNOWN_JUSTICES[justiceMatch[1]];
+    }
+    // "THE CHIEF JUSTICE delivered..."
+    if (/^THE CHIEF JUSTICE\b/.test(line)) {
+      return KNOWN_JUSTICES['ROBERTS'] || null;
+    }
+  }
+  return null;
 }
 
 async function extractCaseTitleFromPage1(doc: any): Promise<string> {
