@@ -179,6 +179,49 @@ describe('tagBoilerplate', () => {
     const result = tagBoilerplate(paras);
     expect(result[0].text).not.toMatch(/^\{\{bp:/);
   });
+
+  it('tags all lines between NOTICE and JUSTICE delivery line', () => {
+    const paras = [
+      { text: 'NOTICE: This opinion is subject to formal revision', footnotes: [] },
+      { text: 'CONEY ISLAND AUTO PARTS UNLIMITED, INC.,', footnotes: [] },
+      { text: 'PETITIONER v. JEANNE ANN BURTON,', footnotes: [] },
+      { text: 'CHAPTER 7 TRUSTEE ON WRIT OF CERTIORARI', footnotes: [] },
+      { text: 'JUSTICE ALITO delivered the opinion of the Court.', footnotes: [] },
+      { text: 'Body text starts here.', footnotes: [] },
+    ];
+    const result = tagBoilerplate(paras);
+    expect(result[0].text).toMatch(/^\{\{bp:/);
+    expect(result[1].text).toMatch(/^\{\{bp:/);
+    expect(result[2].text).toMatch(/^\{\{bp:/);
+    expect(result[3].text).toMatch(/^\{\{bp:/);
+    expect(result[4].text).toMatch(/^\{\{bpj:/);
+    expect(result[5].text).toBe('Body text starts here.');
+  });
+
+  it('tags THE CHIEF JUSTICE delivery line with {{bpj:}}', () => {
+    const paras = [
+      { text: '{{bp:SUPREME COURT OF THE UNITED STATES}}', footnotes: [] },
+      { text: 'CASE NAME v. OTHER PARTY', footnotes: [] },
+      { text: 'THE CHIEF JUSTICE delivered the opinion of the Court.', footnotes: [] },
+      { text: 'Body text here.', footnotes: [] },
+    ];
+    const result = tagBoilerplate(paras);
+    expect(result[2].text).toMatch(/^\{\{bpj:/);
+    expect(result[3].text).toBe('Body text here.');
+  });
+
+  it('Syllabus: tags case caption and cert line, stops before body', () => {
+    const paras = [
+      { text: '{{bp:SUPREME COURT OF THE UNITED STATES}}', footnotes: [] },
+      { text: 'FOO v. BAR', footnotes: [] },
+      { text: 'CERTIORARI TO THE FIFTH CIRCUIT', footnotes: [] },
+      { text: 'The Court held that the statute was valid.', footnotes: [] },
+    ];
+    const result = tagBoilerplate(paras);
+    expect(result[1].text).toMatch(/^\{\{bp:/);
+    expect(result[2].text).toMatch(/^\{\{bp:/);
+    expect(result[3].text).toBe('The Court held that the statute was valid.');
+  });
 });
 
 describe('extractCaseTitleFromText', () => {

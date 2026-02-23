@@ -40,7 +40,7 @@ import Layout from '../layouts/Layout.astro';
 
     try {
       const parsed = new URL(url);
-      if (!parsed.hostname.includes('supremecourt.gov')) {
+      if (!['supremecourt.gov', 'www.supremecourt.gov'].includes(parsed.hostname)) {
         alert('Please enter a URL from supremecourt.gov');
         return;
       }
@@ -76,23 +76,49 @@ import Layout from '../layouts/Layout.astro';
       }
 
       if (!opinions.length) {
-        list.innerHTML = '<p class="empty">No recent opinions found</p>';
+        const empty = document.createElement('p');
+        empty.className = 'empty';
+        empty.textContent = 'No recent opinions found';
+        list.replaceChildren(empty);
         return;
       }
 
-      list.innerHTML = opinions.map((op: any) => {
+      const fragment = document.createDocumentFragment();
+      for (const op of opinions as Array<{ term: string; filename: string; title: string; docketNumber: string; date: string }>) {
         const key = `${op.term}/${op.filename}`;
         const views = popular[key];
-        const viewsBadge = views ? `<span class="opinion-views">${views} view${views === 1 ? '' : 's'}</span>` : '';
-        return `
-          <a href="/read/${op.term}/${op.filename}" class="opinion-card">
-            <span class="opinion-title">${op.title}</span>
-            <span class="opinion-meta">${op.docketNumber} &middot; ${op.date}${viewsBadge}</span>
-          </a>
-        `;
-      }).join('');
+
+        const card = document.createElement('a');
+        card.className = 'opinion-card';
+        card.href = `/read/${op.term}/${op.filename}`;
+
+        const title = document.createElement('span');
+        title.className = 'opinion-title';
+        title.textContent = op.title;
+        card.appendChild(title);
+
+        const meta = document.createElement('span');
+        meta.className = 'opinion-meta';
+        const parts = [op.docketNumber, op.date].filter(Boolean);
+        meta.textContent = parts.join(' \u00b7 ');
+
+        if (views) {
+          const badge = document.createElement('span');
+          badge.className = 'opinion-views';
+          badge.textContent = `${views} view${views === 1 ? '' : 's'}`;
+          meta.appendChild(document.createTextNode(' '));
+          meta.appendChild(badge);
+        }
+
+        card.appendChild(meta);
+        fragment.appendChild(card);
+      }
+      list.replaceChildren(fragment);
     } catch {
-      list.innerHTML = '<p class="empty">Could not load recent opinions</p>';
+      const empty = document.createElement('p');
+      empty.className = 'empty';
+      empty.textContent = 'Could not load recent opinions';
+      list.replaceChildren(empty);
     }
   }
 

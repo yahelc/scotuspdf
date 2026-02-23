@@ -316,20 +316,16 @@ export function splitSCOTUSHeader(text: string): { bpParts: string[]; bodyRest: 
  * the justice delivery/joinder line. Stops at the first non-matching paragraph.
  */
 export function tagBoilerplate(paragraphs: Paragraph[]): Paragraph[] {
-  for (let i = 0; i < paragraphs.length; i++) {
+  // Two-pass approach:
+  // 1. Find the JUSTICE delivery line (the definitive end of boilerplate)
+  // 2. Tag everything before it as boilerplate
+
+  // First, handle NOTE/NOTICE/SUPREME COURT special cases that need splitting
+  for (let i = 0; i < Math.min(paragraphs.length, 3); i++) {
     const text = paragraphs[i].text;
-
-    // Skip heading markers — they're not boilerplate
-    if (/^\{\{h[1-3]:/.test(text)) continue;
-
-    // Already tagged
-    if (/^\{\{bp:/.test(text)) continue;
+    if (/^\{\{/.test(text)) continue;
 
     if (/^NOTE: Where it is feasible/.test(text)) {
-      // The NOTE disclaimer may have body text merged into it (because
-      // buildParagraphs strips the "SUPREME COURT OF THE UNITED STATES" line
-      // that originally separated them). Truncate at the citation that ends
-      // the disclaimer.
       const cutoff = text.search(/\b321,\s*337\.\s*/);
       if (cutoff > 0) {
         const endIdx = text.indexOf('.', cutoff + 4) + 1;
@@ -342,56 +338,128 @@ export function tagBoilerplate(paragraphs: Paragraph[]): Paragraph[] {
       } else {
         paragraphs[i].text = `{{bp:${text}}}`;
       }
-      continue;
-    }
-    if (/^NOTICE: This opinion/.test(text)) {
+    } else if (/^NOTICE: This opinion/.test(text)) {
       paragraphs[i].text = `{{bp:${text}}}`;
-      continue;
-    }
-    if (/^SUPREME COURT OF THE UNITED STATES/.test(text)) {
-      // In the Syllabus, buildParagraphs merges the SCOTUS header + case caption
-      // into one big paragraph. Split at meaningful boundaries.
+    } else if (/^SUPREME COURT OF THE UNITED STATES/.test(text)) {
       const { bpParts, bodyRest } = splitSCOTUSHeader(text);
       const newParas: Paragraph[] = bpParts.map(p => ({ text: `{{bp:${p}}}`, footnotes: [] as Footnote[] }));
       if (bodyRest) {
         newParas.push({ text: bodyRest, footnotes: [] as Footnote[] });
       }
       paragraphs.splice(i, 1, ...newParas);
-      // Skip past the newly inserted bp paragraphs (not the body rest)
       i += bpParts.length - 1;
-      continue;
     }
-    if (/PETITIONER|ON WRIT OF CERTIORARI/.test(text)) {
-      paragraphs[i].text = `{{bp:${text}}}`;
-      continue;
-    }
-    // Case caption line: contains "v." and docket number, but only if short
-    // (long paragraphs with these patterns are body text citing other cases)
-    if (text.length < 250 && /\bv\.\s/.test(text) && /\d{2}[–\-]\d+/.test(text)) {
-      paragraphs[i].text = `{{bp:${text}}}`;
-      continue;
-    }
-    // Justice delivery/joinder line — use {{bpj:}} for prominent styling
-    if (/^(CHIEF )?JUSTICE\b/.test(text)) {
-      paragraphs[i].text = `{{bpj:${text}}}`;
-      if (/delivered|announced|concurring|dissenting/.test(text)) {
-        break; // last boilerplate line
-      }
-      continue;
-    }
-    // Multi-line joinder continuation: "join, concurring" / "join, dissenting"
-    if (/\bjoin\b/i.test(text) && /concurring|dissenting/.test(text)) {
-      paragraphs[i].text = `{{bpj:${text}}}`;
-      break; // last boilerplate line
-    }
-
-    // First non-matching paragraph — stop
-    break;
   }
+
+  // Find the JUSTICE delivery line — the definitive end of boilerplate.
+  // Scan a limited range (boilerplate is at most ~10 paragraphs).
+  let justiceIdx = -1;
+  const scanLimit = Math.min(paragraphs.length, 15);
+  for (let i = 0; i < scanLimit; i++) {
+    const text = paragraphs[i].text;
+    if (/^\{\{/.test(text)) continue; // skip already-tagged or headings
+
+    // "JUSTICE X delivered..." or "CHIEF JUSTICE X delivered..." or "THE CHIEF JUSTICE delivered..."
+    if (/^(THE )?(CHIEF )?JUSTICE\b/.test(text) && /delivered|announced|concurring|dissenting/.test(text)) {
+      justiceIdx = i;
+      break;
+    }
+    // Multi-line joinder: "join, concurring" / "join, dissenting"
+    if (/\bjoin\b/i.test(text) && /concurring|dissenting/.test(text)) {
+      justiceIdx = i;
+      break;
+    }
+    // "Per Curiam." as a standalone paragraph (acts like a delivery line)
+    if (/^Per Curiam\b/i.test(text)) {
+      justiceIdx = i;
+      break;
+    }
+  }
+
+  if (justiceIdx >= 0) {
+    // Tag everything before the JUSTICE line as boilerplate.
+    // Skip paragraphs that are too long — they've been merged with body text.
+    for (let i = 0; i < paragraphs.length && i <= justiceIdx; i++) {
+      const text = paragraphs[i].text;
+      if (/^\{\{/.test(text)) continue; // already tagged or heading
+
+      if (i === justiceIdx) {
+        paragraphs[i].text = `{{bpj:${text}}}`;
+      } else if (text.length < 500) {
+        paragraphs[i].text = `{{bp:${text}}}`;
+      } else {
+        // Long merged paragraph — try to split at "Decided DATE" boundary
+        const decidedMatch = text.match(/Decided\s+\w+\s+\d{1,2},\s+\d{4}\s*/);
+        if (decidedMatch) {
+          const splitIdx = decidedMatch.index! + decidedMatch[0].length;
+          const bpPart = text.slice(0, splitIdx).trim();
+          const bodyPart = text.slice(splitIdx).trim();
+          paragraphs[i].text = `{{bp:${bpPart}}}`;
+          if (bodyPart) {
+            paragraphs.splice(i + 1, 0, { text: bodyPart, footnotes: [] as Footnote[] });
+            justiceIdx++; // adjust for inserted paragraph
+          }
+        }
+      }
+    }
+  } else {
+    // No JUSTICE delivery line found (e.g., Syllabus).
+    // Tag leading paragraphs that match boilerplate patterns.
+    // buildParagraphs often merges caption continuation + CERTIORARI + docket/date
+    // + body text into one long paragraph. We detect that and split at the
+    // "Decided DATE" boundary so the boilerplate portion gets tagged.
+    for (let i = 0; i < scanLimit; i++) {
+      const text = paragraphs[i].text;
+      if (/^\{\{/.test(text)) continue; // already tagged or heading
+
+      // Case caption: short line ending with "v." or containing "v." before
+      // a comma/newline (not mid-sentence citations like "Inc. v. Espinosa")
+      const isCaseCaption = text.length < 250 && (
+        /\bv\.\s*$/.test(text) ||              // ends with "v."
+        /^[A-Z][A-Z\s.,]+\bv\s*\.\s/.test(text) // ALL-CAPS start with "v."
+      );
+      // Cert/writ/petitioner line — only if short (long = merged with body text)
+      const isCertLine = text.length < 350 && (
+        /CERTIORARI\b/.test(text) || /PETITIONER/.test(text) || /ON WRIT OF/.test(text)
+      );
+      // Docket/date line — only if short
+      const isDocketDate = text.length < 350 && (
+        /^No(?:s)?\.\s+\d{2}[–\-]\d+/.test(text) || /Argued\s+\w+\s+\d/.test(text)
+      );
+
+      if (isCaseCaption || isCertLine || isDocketDate) {
+        paragraphs[i].text = `{{bp:${text}}}`;
+        // Stop after docket/date or cert line — body text follows
+        if (isDocketDate || isCertLine) break;
+        continue;
+      }
+
+      // Check for a long merged paragraph containing "Decided DATE" — split it
+      const decidedMatch = text.match(/Decided\s+\w+\s+\d{1,2},\s+\d{4}\s*/);
+      if (decidedMatch) {
+        const splitIdx = decidedMatch.index! + decidedMatch[0].length;
+        const bpPart = text.slice(0, splitIdx).trim();
+        const bodyPart = text.slice(splitIdx).trim();
+        paragraphs[i].text = `{{bp:${bpPart}}}`;
+        if (bodyPart) {
+          paragraphs.splice(i + 1, 0, { text: bodyPart, footnotes: [] as Footnote[] });
+        }
+        break;
+      }
+
+      // Stop at first non-matching paragraph
+      break;
+    }
+  }
+
   return paragraphs;
 }
 
-export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise<ParsedOpinion> {
+interface ParseOptions {
+  maxPages?: number;
+}
+
+export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options: ParseOptions = {}): Promise<ParsedOpinion> {
   // Pre-load the worker on the main thread so pdfjs doesn't try to spawn a Web Worker
   // (which isn't available in serverless environments)
   if (!(globalThis as any).pdfjsWorker) {
@@ -408,6 +476,7 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
   }).promise;
 
   const numPages = doc.numPages;
+  const pagesToProcess = Math.min(numPages, options.maxPages ?? numPages);
 
   // First pass: determine the section header Y position by analyzing page 1
   // The header line (Syllabus, Opinion of the Court, etc.) appears at a consistent Y
@@ -425,7 +494,7 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string): Promise
 
   const pages: PageResult[] = [];
 
-  for (let i = 1; i <= numPages; i++) {
+  for (let i = 1; i <= pagesToProcess; i++) {
     const page = await doc.getPage(i);
     const textContent: PageTextContent = await page.getTextContent();
     const viewport = page.getViewport({ scale: 1.0 });

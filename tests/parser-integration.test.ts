@@ -168,3 +168,62 @@ describe('Ellingburg v. US (24-482) — floating superscript regression', () => 
     expect(para!.text).not.toMatch(/rights\s*\{\{fn:2\}\}/);
   });
 });
+
+describe('Coney Island v. Burton (24-808) — boilerplate regression', () => {
+  let result: Awaited<ReturnType<typeof parsePdf>>;
+
+  it('parses without error', async () => {
+    const data = loadFixture('24-808_lkgn.pdf');
+    result = await parsePdf(data, 'https://www.supremecourt.gov/opinions/25pdf/24-808_lkgn.pdf');
+  }, 30000);
+
+  it('Syllabus tags case caption and cert line as boilerplate', () => {
+    const syllabus = result.chapters.find(c => c.id === 'syllabus');
+    expect(syllabus).toBeDefined();
+    const bpParas = syllabus!.paragraphs.filter(p => /^\{\{bp:/.test(p.text));
+    // Should have: NOTE, SCOTUS header, case caption (v.), cert/docket/date
+    expect(bpParas.length).toBeGreaterThanOrEqual(4);
+    expect(bpParas.some(p => p.text.includes('CONEY ISLAND'))).toBe(true);
+    expect(bpParas.some(p => p.text.includes('CERTIORARI'))).toBe(true);
+  });
+
+  it('Syllabus body text is NOT tagged as boilerplate', () => {
+    const syllabus = result.chapters.find(c => c.id === 'syllabus');
+    expect(syllabus).toBeDefined();
+    const bodyParas = syllabus!.paragraphs.filter(
+      p => !/^\{\{bp/.test(p.text) && !/^\{\{bpj/.test(p.text) && !/^\{\{h[1-3]:/.test(p.text)
+    );
+    expect(bodyParas.length).toBeGreaterThan(0);
+    // The "(b) The Court rejects..." paragraph must NOT be boilerplate
+    expect(bodyParas.some(p => p.text.includes('The Court rejects'))).toBe(true);
+  });
+
+  it('Opinion chapter tags all header lines as boilerplate', () => {
+    const opinion = result.chapters.find(c => c.id === 'opinion-majority');
+    expect(opinion).toBeDefined();
+    const bpParas = opinion!.paragraphs.filter(p => /^\{\{bp:/.test(p.text));
+    // NOTICE + party names + cert line = at least 3
+    expect(bpParas.length).toBeGreaterThanOrEqual(3);
+    expect(bpParas.some(p => p.text.includes('CONEY ISLAND'))).toBe(true);
+  });
+
+  it('Opinion chapter has {{bpj:}} justice delivery line', () => {
+    const opinion = result.chapters.find(c => c.id === 'opinion-majority');
+    expect(opinion).toBeDefined();
+    const bpjParas = opinion!.paragraphs.filter(p => /^\{\{bpj:/.test(p.text));
+    expect(bpjParas.length).toBe(1);
+    expect(bpjParas[0].text).toContain('ALITO');
+    expect(bpjParas[0].text).toContain('delivered');
+  });
+
+  it('Concurrence tags all header lines as boilerplate', () => {
+    const concurrence = result.chapters.find(c => c.id.includes('sotomayor'));
+    expect(concurrence).toBeDefined();
+    const bpParas = concurrence!.paragraphs.filter(p => /^\{\{bp:/.test(p.text));
+    expect(bpParas.length).toBeGreaterThanOrEqual(5);
+    expect(bpParas.some(p => p.text.includes('CONEY ISLAND'))).toBe(true);
+    const bpjParas = concurrence!.paragraphs.filter(p => /^\{\{bpj:/.test(p.text));
+    expect(bpjParas.length).toBe(1);
+    expect(bpjParas[0].text).toContain('SOTOMAYOR');
+  });
+});

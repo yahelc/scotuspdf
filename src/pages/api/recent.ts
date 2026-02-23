@@ -12,18 +12,18 @@ function getCurrentTerm(): string {
   return String(year).slice(-2);
 }
 
-function parseOpinionRows(html: string): RecentOpinion[] {
+export function parseOpinionRows(html: string): RecentOpinion[] {
   const opinions: RecentOpinion[] = [];
+  const seen = new Set<string>();
 
-  // Match entire table rows, then extract cells
-  // SCOTUS slip opinion pages: columns are R#, Date, Docket, Name, J., Citation
-  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  // Preferred path: parse by table rows/cells.
+  const rowRegex = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
 
   let match;
   while ((match = rowRegex.exec(html)) !== null) {
     const rowHtml = match[1];
     const cells: string[] = [];
-    const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    const cellRegex = /<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi;
     let cellMatch;
     while ((cellMatch = cellRegex.exec(rowHtml)) !== null) {
       cells.push(cellMatch[1].trim());
@@ -42,9 +42,9 @@ function parseOpinionRows(html: string): RecentOpinion[] {
     if (!docketMatch) continue;
 
     // Extract case name and PDF link
-    const linkMatch = nameCell.match(/href=['"](.*?\.pdf)['"]/i);
-    const titleMatch = nameCell.match(/>([^<]+)</);
-    if (!linkMatch || !titleMatch) continue;
+    const linkMatch = nameCell.match(/href=['"]([^'"]+?\.pdf(?:\?[^'"]*)?)['"]/i);
+    const titleText = stripHtml(nameCell);
+    if (!linkMatch || !titleText) continue;
 
     const pdfPath = linkMatch[1];
     const pdfUrl = pdfPath.startsWith('http') ? pdfPath : `${SCOTUS_BASE}${pdfPath}`;
@@ -54,8 +54,12 @@ function parseOpinionRows(html: string): RecentOpinion[] {
     const term = pathMatch ? pathMatch[1] : '';
     const filename = pathMatch ? pathMatch[2] : pdfPath.split('/').pop() || '';
 
+    const key = `${term}/${filename}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
     opinions.push({
-      title: titleMatch[1].trim(),
+      title: titleText,
       date: dateMatch[1],
       docketNumber: docketMatch[1],
       pdfUrl,
@@ -64,7 +68,55 @@ function parseOpinionRows(html: string): RecentOpinion[] {
     });
   }
 
+  // Fallback: if row parsing found nothing, collect PDF anchors directly.
+  if (opinions.length === 0) {
+    const anchorRegex = /<a\b[^>]*href=['"]([^'"]+?\.pdf(?:\?[^'"]*)?)['"][^>]*>([\s\S]*?)<\/a>/gi;
+    let anchorMatch;
+    while ((anchorMatch = anchorRegex.exec(html)) !== null) {
+      const pdfPath = anchorMatch[1];
+      const title = stripHtml(anchorMatch[2]);
+      if (!title) continue;
+
+      const pathMatch = pdfPath.match(/\/(\d{2})pdf\/([\w.-]+\.pdf)/i);
+      const term = pathMatch ? pathMatch[1] : '';
+      const filename = pathMatch ? pathMatch[2] : pdfPath.split('/').pop() || '';
+      const key = `${term}/${filename}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const pdfUrl = pdfPath.startsWith('http') ? pdfPath : `${SCOTUS_BASE}${pdfPath}`;
+      opinions.push({
+        title,
+        date: '',
+        docketNumber: '',
+        pdfUrl,
+        term,
+        filename,
+      });
+      if (opinions.length >= 10) break;
+    }
+  }
+
   return opinions.slice(0, 10);
+}
+
+function stripHtml(input: string): string {
+  return decodeHtmlEntities(input.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+}
+
+function decodeHtmlEntities(input: string): string {
+  const entities: Record<string, string> = {
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#39;': "'",
+    '&nbsp;': ' ',
+    '&middot;': '\u00b7',
+  };
+  let out = input.replace(/&(amp|lt|gt|quot|nbsp|middot|#39);/g, (m) => entities[m] || m);
+  out = out.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+  return out;
 }
 
 export const GET: APIRoute = async () => {
