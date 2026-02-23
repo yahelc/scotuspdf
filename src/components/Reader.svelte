@@ -921,7 +921,7 @@
     margin-right: auto;
   }
 
-  .content.paged .chapter {
+  .content.paged .chapter:not(:first-of-type) {
     break-before: column;
   }
 
