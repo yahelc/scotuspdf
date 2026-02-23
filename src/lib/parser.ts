@@ -537,10 +537,13 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
       }
       return true;
     });
-    // Sort by y descending then x ascending. Round y to avoid sub-pixel jitter
-    // (e.g., 333.300 vs 333.299) that can reorder items on the same visual line.
+    // Sort by y descending then x ascending. Use coarse rounding (nearest 2px)
+    // to avoid sub-pixel jitter splitting items on the same visual line into
+    // different sort groups (e.g., small-caps "HOMAS" at y=307.500 vs body text
+    // at y=307.499 — Math.round gives 308 vs 307, breaking line ordering).
+    const snapY = (y: number) => Math.round(y / 2) * 2;
     bodyItems.sort((a, b) => {
-      const dy = Math.round(b.y) - Math.round(a.y);
+      const dy = snapY(b.y) - snapY(a.y);
       return dy !== 0 ? dy : a.x - b.x;
     });
 
@@ -624,7 +627,7 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
 
     // Re-sort after snapping superscript y positions
     bodyItems.sort((a, b) => {
-      const dy = Math.round(b.y) - Math.round(a.y);
+      const dy = snapY(b.y) - snapY(a.y);
       return dy !== 0 ? dy : a.x - b.x;
     });
 
