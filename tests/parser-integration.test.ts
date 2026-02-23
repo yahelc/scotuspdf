@@ -55,7 +55,7 @@ describe('Learning Resources (24-1287)', () => {
     const opinion = result.chapters.find(c => c.id === 'opinion-majority');
     expect(opinion).toBeDefined();
     expect(opinion!.author).toBe('Roberts');
-    expect(opinion!.title).toBe('Roberts, majority');
+    expect(opinion!.title).toBe('Opinion of the Court');
   });
 
   it('Thomas dissent has "I join JUSTICE KAVANAUGH" in correct word order (sub-pixel y-sort regression)', () => {
@@ -115,7 +115,7 @@ describe('Trump v. US (23-939)', () => {
     const opinion = result.chapters.find(c => c.id === 'opinion-majority');
     expect(opinion).toBeDefined();
     expect(opinion!.author).toBe('Roberts');
-    expect(opinion!.title).toBe('Roberts, majority');
+    expect(opinion!.title).toBe('Opinion of the Court');
   });
 
   it('Sotomayor dissent has multi-line joinder tagged {{bpj:}}', () => {
@@ -234,7 +234,7 @@ describe('Coney Island v. Burton (24-808) — boilerplate regression', () => {
     const opinion = result.chapters.find(c => c.id === 'opinion-majority');
     expect(opinion).toBeDefined();
     expect(opinion!.author).toBe('Alito');
-    expect(opinion!.title).toBe('Alito, majority');
+    expect(opinion!.title).toBe('Opinion of the Court');
   });
 
   it('Concurrence tags all header lines as boilerplate', () => {

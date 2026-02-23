@@ -896,20 +896,17 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
     footnotes.sort((a, b) => a.id - b.id);
 
     const paragraphs = tagBoilerplate(buildParagraphs(cd.text));
-    let { title, author } = cd.header;
+    let author = cd.header.author;
 
     // For "Opinion of the Court" chapters, extract the author from the
     // JUSTICE delivery line (e.g. "JUSTICE THOMAS delivered the opinion...")
     if (cd.header.id === 'opinion-majority' && !author) {
       author = extractAuthorFromDeliveryLine(paragraphs);
     }
-    if (cd.header.id === 'opinion-majority' && author) {
-      title = `${author}, majority`;
-    }
 
     return {
       id: cd.header.id,
-      title,
+      title: cd.header.title,
       author,
       paragraphs,
       footnotes,
