@@ -6,7 +6,7 @@ import Layout from '../layouts/Layout.astro';
   <main class="home">
     <header class="hero">
       <h1>SCOTUS PDF Reader</h1>
-      <p class="tagline">Turn SCOTUS PDFs into easy reading on your phone.</p>
+      <p class="tagline">Turn SCOTUS PDFs into easy reading on any device.</p>
       <ul class="features">
         <li>Chapter Navigation</li>
         <li>Inlined Footnotes</li>
@@ -152,24 +152,27 @@ import Layout from '../layouts/Layout.astro';
 
   .tagline {
     color: var(--text-secondary);
-    font-size: 0.95rem;
+    font-size: clamp(0.7rem, 4vw, 0.95rem);
     line-height: 1.5;
     max-width: 440px;
     margin: 0 auto 1rem;
+    padding: 0 0.5rem;
+    white-space: nowrap;
   }
 
   .features {
     list-style: none;
-    padding: 0;
+    padding: 0 0.5rem;
     margin: 0 auto 1.25rem;
     display: flex;
     flex-direction: row;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     justify-content: center;
     gap: 0;
     font-family: var(--font-ui);
-    font-size: 0.8rem;
+    font-size: clamp(0.55rem, 3.2vw, 0.8rem);
     color: var(--text-secondary);
+    white-space: nowrap;
   }
 
   .features li + li::before {
