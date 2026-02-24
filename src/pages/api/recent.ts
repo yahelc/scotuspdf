@@ -1,10 +1,21 @@
 import type { APIRoute } from 'astro';
-import { getCached, setCache } from '../../lib/s3cache';
+import { getStore } from '@netlify/blobs';
+import { isConferenceWindow } from '../../lib/scotus-calendar';
 import type { RecentOpinion } from '../../lib/types';
 
 export const prerender = false;
 
 const SCOTUS_BASE = 'https://www.supremecourt.gov';
+const BLOB_KEY = 'recent/opinions.json';
+const CONFERENCE_STALENESS_MS = 30_000; // 30 seconds
+const NORMAL_STALENESS_MS = 600_000; // 10 minutes
+
+interface RecentCache {
+  opinions: RecentOpinion[];
+  scrapedAt: string;
+}
+
+const inflight = new Map<string, Promise<RecentCache>>();
 
 function getCurrentTerm(): string {
   const now = new Date();
@@ -119,46 +130,91 @@ function decodeHtmlEntities(input: string): string {
   return out;
 }
 
-export const GET: APIRoute = async () => {
-  const cacheKey = 'recent/opinions.json';
+async function scrapeAndCache(): Promise<RecentCache> {
+  const term = getCurrentTerm();
+  const resp = await fetch(`${SCOTUS_BASE}/opinions/slipopinion/${term}`);
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch opinions page: ${resp.status}`);
+  }
 
-  // Check cache (short TTL)
-  const cached = await getCached<RecentOpinion[]>(cacheKey);
-  if (cached) {
-    return new Response(JSON.stringify(cached), {
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'max-age=3600',
-      },
-    });
+  const html = await resp.text();
+  const opinions = parseOpinionRows(html);
+  const cache: RecentCache = { opinions, scrapedAt: new Date().toISOString() };
+
+  // Write to Blob (non-blocking)
+  try {
+    const store = getStore('recent-opinions');
+    await store.setJSON(BLOB_KEY, cache);
+  } catch (err) {
+    console.error('Blob write failed:', err);
+  }
+
+  return cache;
+}
+
+export const GET: APIRoute = async ({ request }) => {
+  const url = new URL(request.url);
+  const forceRefresh = url.searchParams.get('refresh') === 'true';
+  const conferenceWindow = await isConferenceWindow();
+  const stalenessMs = conferenceWindow ? CONFERENCE_STALENESS_MS : NORMAL_STALENESS_MS;
+  const cdnMaxAge = conferenceWindow ? 30 : 600;
+
+  // Check Blob cache (unless force refresh)
+  if (!forceRefresh) {
+    try {
+      const store = getStore('recent-opinions');
+      const cached = await store.get(BLOB_KEY, { type: 'json' }) as RecentCache | null;
+      if (cached) {
+        const age = Date.now() - new Date(cached.scrapedAt).getTime();
+        if (age < stalenessMs) {
+          return new Response(JSON.stringify(cached.opinions), {
+            headers: {
+              'Content-Type': 'application/json',
+              'Cache-Control': `max-age=0, s-maxage=${cdnMaxAge}`,
+            },
+          });
+        }
+      }
+    } catch {
+      // Blob read failed — fall through to scrape
+    }
+  }
+
+  // Singleflight: prevent concurrent scrapes
+  let scrapePromise = inflight.get(BLOB_KEY);
+  if (!scrapePromise) {
+    scrapePromise = scrapeAndCache();
+    inflight.set(BLOB_KEY, scrapePromise);
+    scrapePromise.finally(() => inflight.delete(BLOB_KEY));
   }
 
   try {
-    const term = getCurrentTerm();
-    const resp = await fetch(`${SCOTUS_BASE}/opinions/slipopinion/${term}`);
-    if (!resp.ok) {
-      return new Response(JSON.stringify({ error: 'Failed to fetch opinions page' }), {
-        status: 502,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    const html = await resp.text();
-    const opinions = parseOpinionRows(html);
-
-    // Cache with short TTL
-    setCache(cacheKey, opinions, 3600).catch((err) =>
-      console.error('Cache store failed:', err)
-    );
-
-    return new Response(JSON.stringify(opinions), {
+    const result = await scrapePromise;
+    return new Response(JSON.stringify(result.opinions), {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'max-age=3600',
+        'Cache-Control': `max-age=0, s-maxage=${cdnMaxAge}`,
       },
     });
   } catch (err) {
     console.error('Recent opinions fetch error:', err);
+
+    // Try to serve stale data on error
+    try {
+      const store = getStore('recent-opinions');
+      const stale = await store.get(BLOB_KEY, { type: 'json' }) as RecentCache | null;
+      if (stale) {
+        return new Response(JSON.stringify(stale.opinions), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': `max-age=0, s-maxage=60`,
+          },
+        });
+      }
+    } catch {
+      // Nothing to fall back on
+    }
+
     return new Response(JSON.stringify({ error: 'Failed to fetch recent opinions' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
