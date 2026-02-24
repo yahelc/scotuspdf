@@ -25,6 +25,8 @@
 
   // Section breadcrumb
   let sectionBreadcrumb = $state('');
+  let showSectionNav = $state(false);
+  let sectionNavPos = $state({ top: 0, left: 0 });
 
   // Settings pane
   let showSettings = $state(false);
@@ -122,6 +124,7 @@
     currentChapterId = id;
     sectionBreadcrumb = '';
     showChapterNav = false;
+    showSectionNav = false;
     const el = document.getElementById(id);
     if (el && prefs.viewMode === 'paged' && pageWidth > 0) {
       // In paged mode, calculate which page the chapter starts on
@@ -131,6 +134,43 @@
       el.scrollIntoView({ behavior: 'smooth' });
     }
     updateHash(id);
+  }
+
+  function jumpToSubchapter(chapterId: string, elementId: string) {
+    currentChapterId = chapterId;
+    showChapterNav = false;
+    showSectionNav = false;
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    if (prefs.viewMode === 'paged' && pageWidth > 0) {
+      goToPage(Math.floor(el.offsetLeft / pageWidth));
+    } else {
+      el.scrollIntoView({ behavior: 'smooth' });
+    }
+  }
+
+  function getSubchapters(chapter: { id: string; paragraphs: { text: string }[] }) {
+    const result: { level: number; qualified: string; elementId: string }[] = [];
+    let h1 = '', h2 = '', h3 = '';
+    for (let i = 0; i < chapter.paragraphs.length; i++) {
+      const text = chapter.paragraphs[i].text;
+      const m = text.match(/^\{\{h([123]):(.+)\}\}$/);
+      if (!m) continue;
+      const level = parseInt(m[1]);
+      const label = m[2];
+      if (level === 1) { h1 = label; h2 = ''; h3 = ''; }
+      else if (level === 2) { h2 = label; h3 = ''; }
+      else { h3 = label; }
+      const qualified = [h1, h2, h3].filter(Boolean).join('\u2013');
+      result.push({ level, qualified, elementId: `${chapter.id}-sec-${i}` });
+    }
+    return result;
+  }
+
+  function currentChapterSubchapters() {
+    if (!opinion) return [];
+    const ch = opinion.chapters.find((c) => c.id === currentChapterId);
+    return ch ? getSubchapters(ch) : [];
   }
 
   function updateHash(chapterId: string) {
@@ -495,12 +535,25 @@
         {opinion.caseTitle}
       </button>
       <div class="toolbar-row">
-        <button class="chapter-btn" onclick={() => showChapterNav = !showChapterNav}>
+        <button class="chapter-btn" onclick={() => { showChapterNav = !showChapterNav; showSectionNav = false; }}>
           {currentChapterTitle()}
           <span class="chevron">{showChapterNav ? '\u25B2' : '\u25BC'}</span>
         </button>
         {#if sectionBreadcrumb}
-          <span class="section-breadcrumb">{sectionBreadcrumb}</span>
+          {@const subs = currentChapterSubchapters()}
+          {#if subs.length > 0}
+            <button class="section-breadcrumb-btn" onclick={(e) => {
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              sectionNavPos = { top: rect.bottom + 4, left: rect.left };
+              showSectionNav = !showSectionNav;
+              showChapterNav = false;
+            }}>
+              {sectionBreadcrumb}
+              <span class="chevron">{showSectionNav ? '\u25B2' : '\u25BC'}</span>
+            </button>
+          {:else}
+            <span class="section-breadcrumb">{sectionBreadcrumb}</span>
+          {/if}
         {/if}
       </div>
     </div>
@@ -569,6 +622,22 @@
     </div>
   {/if}
 
+  {#if showSectionNav}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="section-nav-backdrop" onclick={() => showSectionNav = false}></div>
+    <nav class="section-nav" style="top: {sectionNavPos.top}px; left: {sectionNavPos.left}px">
+      {#each currentChapterSubchapters() as sub}
+        <button
+          class="subchapter-item"
+          class:subchapter-h2={sub.level === 2}
+          class:subchapter-h3={sub.level === 3}
+          class:active={sub.qualified === sectionBreadcrumb}
+          onclick={() => jumpToSubchapter(currentChapterId, sub.elementId)}
+        >{sub.qualified}</button>
+      {/each}
+    </nav>
+  {/if}
+
   <!-- Content -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="content-wrapper" class:paged={prefs.viewMode === 'paged'} class:flash-prev={flashPrev} class:flash-next={flashNext} bind:this={wrapperEl}>
@@ -598,11 +667,11 @@
 
         {#each chapter.paragraphs as para, pi}
           {#if para.text.startsWith('{{h1:')}
-            <div class="section-heading h1">{para.text.slice(5, -2)}</div>
+            <div class="section-heading h1" id="{chapter.id}-sec-{pi}">{para.text.slice(5, -2)}</div>
           {:else if para.text.startsWith('{{h2:')}
-            <div class="section-heading h2">{para.text.slice(5, -2)}</div>
+            <div class="section-heading h2" id="{chapter.id}-sec-{pi}">{para.text.slice(5, -2)}</div>
           {:else if para.text.startsWith('{{h3:')}
-            <div class="section-heading h3">{para.text.slice(5, -2)}</div>
+            <div class="section-heading h3" id="{chapter.id}-sec-{pi}">{para.text.slice(5, -2)}</div>
           {:else if para.text.startsWith('{{bp:') || para.text.startsWith('{{bpj:')}
             {#if pi === 0 || (!chapter.paragraphs[pi - 1]?.text.startsWith('{{bp:') && !chapter.paragraphs[pi - 1]?.text.startsWith('{{bpj:'))}
               <div class="chapter-boilerplate">
@@ -754,6 +823,27 @@
     text-overflow: ellipsis;
   }
 
+  .section-breadcrumb-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-family: var(--font-ui);
+    white-space: nowrap;
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .section-breadcrumb-btn:hover {
+    color: var(--text);
+  }
+
   .toolbar-controls {
     display: flex;
     align-items: center;
@@ -848,6 +938,61 @@
   .chapter-author {
     font-size: 0.8rem;
     color: var(--text-secondary);
+  }
+
+  .section-nav-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 24;
+  }
+
+  .section-nav {
+    position: fixed;
+    z-index: 25;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    max-height: 50vh;
+    overflow-y: auto;
+    min-width: 5rem;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .subchapter-item {
+    display: block;
+    padding: 0.45rem 1rem 0.45rem 0.75rem;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-family: var(--font-ui);
+    font-size: 0.85rem;
+    color: var(--text);
+    border-bottom: 1px solid var(--border);
+    width: 100%;
+    white-space: nowrap;
+  }
+
+  .subchapter-item:last-child {
+    border-bottom: none;
+  }
+
+  .subchapter-item:hover, .subchapter-item.active {
+    background: var(--bg);
+  }
+
+  .subchapter-item.subchapter-h2 {
+    padding-left: 1.75rem;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+  }
+
+  .subchapter-item.subchapter-h3 {
+    padding-left: 2.75rem;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
   }
 
   .content {
