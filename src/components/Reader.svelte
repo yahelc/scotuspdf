@@ -23,6 +23,29 @@
   // Chapter progress
   let chapterProgress = $state(0);
 
+  // Segmented progress bar metrics
+  interface ChapterMetric { id: string; sizeFraction: number; startPage: number; endPage: number; }
+  let chapterMetrics = $state<ChapterMetric[]>([]);
+
+  let pagedChapterIndex = $derived.by(() => {
+    const idx = chapterMetrics.findIndex(m => currentPage >= m.startPage && currentPage <= m.endPage);
+    return Math.max(0, idx);
+  });
+
+  let activeChapterIndex = $derived.by(() => {
+    if (prefs.viewMode === 'paged') return pagedChapterIndex;
+    if (!opinion) return 0;
+    return Math.max(0, opinion.chapters.findIndex(c => c.id === currentChapterId));
+  });
+
+  let activeChapterProgress = $derived.by(() => {
+    if (prefs.viewMode === 'paged') {
+      const m = chapterMetrics[activeChapterIndex];
+      return m ? (currentPage - m.startPage) / Math.max(1, m.endPage - m.startPage) : 0;
+    }
+    return chapterProgress;
+  });
+
   // Section breadcrumb
   let sectionBreadcrumb = $state('');
   let showSectionNav = $state(false);
@@ -242,6 +265,43 @@
       });
     });
   }
+
+  function computeChapterMetrics() {
+    if (!opinion || !contentEl) return;
+    const metrics: ChapterMetric[] = [];
+    if (prefs.viewMode === 'paged' && pageWidth > 0) {
+      let docPages = 0;
+      for (const ch of opinion.chapters) {
+        const el = document.getElementById(ch.id);
+        if (!el) continue;
+        const startPage = Math.floor(el.offsetLeft / pageWidth);
+        const endPage = Math.max(startPage, Math.ceil((el.offsetLeft + el.offsetWidth) / pageWidth) - 1);
+        metrics.push({ id: ch.id, sizeFraction: 0, startPage, endPage });
+        docPages = Math.max(docPages, endPage + 1);
+      }
+      for (const m of metrics) m.sizeFraction = (m.endPage - m.startPage + 1) / Math.max(1, docPages);
+    } else {
+      let totalHeight = 0;
+      const els: [string, HTMLElement][] = [];
+      for (const ch of opinion.chapters) {
+        const el = document.getElementById(ch.id);
+        if (!el) continue;
+        totalHeight += el.offsetHeight;
+        els.push([ch.id, el]);
+      }
+      for (const [id, el] of els) {
+        metrics.push({ id, sizeFraction: el.offsetHeight / Math.max(1, totalHeight), startPage: 0, endPage: 0 });
+      }
+    }
+    chapterMetrics = metrics;
+  }
+
+  $effect(() => {
+    if (!opinion) return;
+    const _mode = prefs.viewMode;
+    const _pw = pageWidth;
+    requestAnimationFrame(() => computeChapterMetrics());
+  });
 
   function goToPage(n: number) {
     if (!contentEl || !pageWidth) return;
@@ -731,11 +791,20 @@
   {/if}
   </div>
 
-  <!-- Progress bar (scroll mode) / Page indicator (paged mode) -->
-  {#if prefs.viewMode === 'paged'}
-    <div class="page-indicator">{currentPage + 1} / {totalPages}</div>
-  {:else}
-    <div class="progress-bar" style="width: {chapterProgress * 100}%"></div>
+  <!-- Segmented progress bar -->
+  {#if chapterMetrics.length > 0}
+    <div class="segmented-progress">
+      {#each chapterMetrics as cm, i}
+        <div class="progress-segment" style="flex: {cm.sizeFraction}">
+          <div
+            class="progress-fill"
+            class:past={i < activeChapterIndex}
+            class:active={i === activeChapterIndex}
+            style="width: {i < activeChapterIndex ? 100 : i === activeChapterIndex ? activeChapterProgress * 100 : 0}%"
+          ></div>
+        </div>
+      {/each}
+    </div>
   {/if}
 
 {/if}
@@ -1330,28 +1399,34 @@
     color: #fff;
   }
 
-  .page-indicator {
+  .segmented-progress {
     position: fixed;
     bottom: 0;
     left: 0;
     right: 0;
-    text-align: center;
-    font-family: var(--font-ui);
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    background: var(--bg-surface);
-    border-top: 1px solid var(--border);
-    padding: 0.25rem;
+    height: 3px;
+    display: flex;
+    gap: 2px;
     z-index: 10;
   }
 
-  .progress-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    height: 3px;
-    background: var(--accent);
+  .progress-segment {
+    height: 100%;
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    width: 0%;
     transition: width 0.1s;
-    z-index: 10;
+  }
+
+  .progress-fill.active {
+    background: var(--accent);
+  }
+
+  .progress-fill.past {
+    background: color-mix(in srgb, var(--accent) 45%, transparent);
   }
 </style>
