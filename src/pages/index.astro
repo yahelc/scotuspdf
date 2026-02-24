@@ -6,7 +6,13 @@ import Layout from '../layouts/Layout.astro';
   <main class="home">
     <header class="hero">
       <h1>SCOTUS PDF Reader</h1>
-      <p class="subtitle">Read Supreme Court opinions in a mobile-friendly format</p>
+      <p class="tagline">Turn SCOTUS PDFs into easy reading on your phone.</p>
+      <ul class="features">
+        <li>Chapter Navigation</li>
+        <li>Inlined Footnotes</li>
+        <li>Flexible Reading Modes</li>
+      </ul>
+      <a class="demo-link" href="/read/23/23-939_e2pg.pdf">Try it: <em>Trump v. United States</em> →</a>
     </header>
 
     <form class="search-form" id="search-form">
@@ -144,9 +150,45 @@ import Layout from '../layouts/Layout.astro';
     margin-bottom: 0.5rem;
   }
 
-  .subtitle {
+  .tagline {
     color: var(--text-secondary);
-    font-size: 1rem;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    max-width: 440px;
+    margin: 0 auto 1rem;
+  }
+
+  .features {
+    list-style: none;
+    padding: 0;
+    margin: 0 auto 1.25rem;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0;
+    font-family: var(--font-ui);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+  }
+
+  .features li + li::before {
+    content: '|';
+    margin: 0 0.5rem;
+    opacity: 0.4;
+  }
+
+  .demo-link {
+    display: inline-block;
+    font-family: var(--font-ui);
+    font-size: 0.85rem;
+    color: var(--accent);
+    text-decoration: none;
+    margin-bottom: 0.5rem;
+  }
+
+  .demo-link:hover {
+    text-decoration: underline;
   }
 
   .search-form {

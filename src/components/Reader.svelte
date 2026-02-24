@@ -795,7 +795,7 @@
   {#if chapterMetrics.length > 0}
     <div class="segmented-progress">
       {#each chapterMetrics as cm, i}
-        <div class="progress-segment" style="flex: {cm.sizeFraction}">
+        <div class="progress-segment" class:active={i === activeChapterIndex} style="flex: {cm.sizeFraction}">
           <div
             class="progress-fill"
             class:past={i < activeChapterIndex}
@@ -1404,16 +1404,22 @@
     bottom: 0;
     left: 0;
     right: 0;
-    height: 3px;
+    height: 5px;
     display: flex;
+    align-items: flex-end;
     gap: 2px;
     z-index: 10;
   }
 
   .progress-segment {
-    height: 100%;
+    height: 3px;
     background: var(--border);
     overflow: hidden;
+    transition: height 0.15s;
+  }
+
+  .progress-segment.active {
+    height: 5px;
   }
 
   .progress-fill {
