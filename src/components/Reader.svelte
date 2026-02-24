@@ -55,6 +55,21 @@
   let showMenu = $state(false);
   let menuPos = $state({ top: 0, right: 0 });
 
+  // One-time disclaimer
+  let showDisclaimer = $state(false);
+
+  let disclaimerTimer: ReturnType<typeof setTimeout> | null = null;
+  let disclaimerShownAt = 0;
+
+  function dismissDisclaimer(source: 'tap' | 'auto' | 'scroll' = 'tap') {
+    if (!showDisclaimer) return;
+    // Ignore scroll dismissal in the first 800ms to avoid programmatic scroll on load
+    if (source === 'scroll' && Date.now() - disclaimerShownAt < 800) return;
+    showDisclaimer = false;
+    if (disclaimerTimer) { clearTimeout(disclaimerTimer); disclaimerTimer = null; }
+    try { localStorage.setItem('scotus-disclaimer-seen', '1'); } catch {}
+  }
+
   function termFromUrl(url: string): string {
     const m = url.match(/\/(\d{2})pdf\//);
     return m ? `20${m[1]}` : '';
@@ -96,6 +111,14 @@
         if (data.caseTitle) {
           document.title = data.caseTitle + ' — SCOTUS PDF Reader';
         }
+        try {
+          if (!localStorage.getItem('scotus-disclaimer-seen')) {
+            showDisclaimer = true;
+            disclaimerShownAt = Date.now();
+            disclaimerTimer = setTimeout(() => dismissDisclaimer('auto'), 10000);
+          }
+        } catch {}
+
         // Track hit (fire-and-forget)
         const pathMatch = pdfUrl.match(/\/(\d{2})pdf\/([\w\-]+\.pdf)/i);
         if (pathMatch) {
@@ -213,6 +236,7 @@
 
   function handleScroll() {
     if (!contentEl || !opinion) return;
+    if (showDisclaimer) dismissDisclaimer('scroll');
     if (prefs.viewMode === 'paged') return;
 
     // Update current chapter based on scroll position
@@ -311,6 +335,7 @@
 
   function goToPage(n: number) {
     if (!contentEl || !pageWidth) return;
+    if (showDisclaimer) dismissDisclaimer('scroll');
     const clamped = Math.max(0, Math.min(n, totalPages - 1));
     currentPage = clamped;
     contentEl.scrollTo({ left: clamped * pageWidth, behavior: 'instant' });
@@ -702,6 +727,15 @@
         >{sub.qualified}</button>
       {/each}
     </nav>
+  {/if}
+
+  <!-- Disclaimer overlay (one-time) -->
+  {#if showDisclaimer}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="disclaimer-overlay" onclick={() => dismissDisclaimer('tap')}>
+      <p class="disclaimer-text">This is an unofficial rendering of a Supreme Court slip opinion. We are not responsible for errors or omissions. For the official text, consult <a href="https://supremecourt.gov" target="_blank" rel="noopener" onclick={(e) => e.stopPropagation()}>supremecourt.gov</a>.</p>
+      <p class="disclaimer-dismiss">Tap anywhere to dismiss</p>
+    </div>
   {/if}
 
   <!-- Content -->
@@ -1465,5 +1499,41 @@
 
   .progress-fill.past {
     background: color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+
+  .disclaimer-overlay {
+    position: fixed;
+    top: 49px;
+    left: 0;
+    right: 0;
+    background: rgba(0, 0, 0, 0.82);
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.875rem 1.5rem;
+    cursor: pointer;
+  }
+
+  .disclaimer-text {
+    color: #fff;
+    font-family: var(--font-ui);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    text-align: center;
+    max-width: 420px;
+    margin: 0;
+  }
+
+  .disclaimer-text a {
+    color: #aac8ff;
+  }
+
+  .disclaimer-dismiss {
+    color: rgba(255, 255, 255, 0.45);
+    font-family: var(--font-ui);
+    font-size: 0.75rem;
+    margin: 0;
   }
 </style>
