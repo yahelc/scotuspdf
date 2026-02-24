@@ -55,6 +55,57 @@
   let showMenu = $state(false);
   let menuPos = $state({ top: 0, right: 0, maxHeight: 0 });
 
+  // Case info modal
+  interface OyezCase {
+    question: string;
+    facts_of_the_case: string;
+    conclusion: string;
+    decisions: Array<{
+      description: string;
+      majority_vote: number;
+      minority_vote: number;
+      winning_party: string | null;
+      votes: Array<{
+        member: { last_name: string };
+        vote: string;
+        opinion_type: string;
+      }>;
+    }>;
+  }
+  let showCaseInfo = $state(false);
+  let caseInfo = $state<OyezCase | null>(null);
+  let oyezAvailable = $state<boolean | null>(null); // null = checking, false = unavailable, true = ready
+  let factsExpanded = $state(false);
+  let conclusionExpanded = $state(false);
+
+  async function fetchOyezData() {
+    const year = termFromUrl(pdfUrl);
+    const docket = opinion?.docketNumber;
+    if (!year || !docket) { oyezAvailable = false; return; }
+    try {
+      const resp = await fetch(`https://api.oyez.org/cases/${year}/${docket}`);
+      if (!resp.ok) { oyezAvailable = false; return; }
+      const data = await resp.json();
+      const textContent = (s: string | null) => (s ?? '').replace(/<[^>]*>/g, '').trim();
+      const hasContent = !!(textContent(data.question) || textContent(data.facts_of_the_case) || textContent(data.conclusion));
+      if (hasContent) {
+        caseInfo = data;
+        oyezAvailable = true;
+      } else {
+        oyezAvailable = false;
+      }
+    } catch {
+      oyezAvailable = false;
+    }
+  }
+
+  function openCaseInfo() {
+    showMenu = false;
+    factsExpanded = false;
+    conclusionExpanded = false;
+    showCaseInfo = true;
+  }
+
   // One-time disclaimer
   let showDisclaimer = $state(false);
 
@@ -68,6 +119,10 @@
     showDisclaimer = false;
     if (disclaimerTimer) { clearTimeout(disclaimerTimer); disclaimerTimer = null; }
     try { localStorage.setItem('scotus-disclaimer-seen', '1'); } catch {}
+  }
+
+  function cleanHtml(html: string): string {
+    return html.replace(/(<p>[\s\u00a0]*<\/p>\s*)+$/gi, '').trim();
   }
 
   function termFromUrl(url: string): string {
@@ -426,6 +481,15 @@
     return () => window.removeEventListener('keydown', handleKeydown);
   });
 
+  // Fetch Oyez data once opinion is loaded; reset when pdfUrl changes
+  $effect(() => {
+    if (!pdfUrl) return;
+    oyezAvailable = null;
+    caseInfo = null;
+    if (!opinion) return;
+    fetchOyezData();
+  });
+
   // Recalc pages when viewMode, fontSize, or opinion changes
   $effect(() => {
     // Access reactive dependencies
@@ -673,6 +737,15 @@
       </div>
     </div>
     <div class="toolbar-controls">
+      {#if oyezAvailable === true}
+        <button class="toolbar-btn" onclick={openCaseInfo} aria-label="Case info">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/>
+            <line x1="12" y1="12" x2="12" y2="17"/>
+          </svg>
+        </button>
+      {/if}
       <button class="toolbar-btn" onclick={(e) => {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         const top = rect.bottom + 4;
@@ -765,6 +838,89 @@
         >{sub.qualified}</button>
       {/each}
     </nav>
+  {/if}
+
+  <!-- Case info modal -->
+  {#if showCaseInfo}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-backdrop" onclick={() => showCaseInfo = false}></div>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <span class="modal-title">{opinion.caseTitle}</span>
+        <button class="modal-close" onclick={() => showCaseInfo = false}>&times;</button>
+      </div>
+      <div class="modal-body">
+        {#if caseInfo}
+          {@const dec = caseInfo.decisions?.[0]}
+
+          {#if dec?.description}
+            <p class="modal-description">{dec.description}</p>
+          {/if}
+
+          {#if dec?.votes?.length}
+            {@const majorityVotes = dec.votes.filter(v => v.vote === 'majority')}
+            {@const minorityVotes = dec.votes.filter(v => v.vote === 'minority')}
+            <div class="modal-section">
+              <h3 class="modal-section-title">Vote</h3>
+              <div class="vote-summary">
+                {dec.majority_vote}–{dec.minority_vote}
+                {#if dec.winning_party}
+                  <span class="vote-winner">for {dec.winning_party}</span>
+                {/if}
+              </div>
+              <div class="vote-grid">
+                <div class="vote-col">
+                  <div class="vote-col-label">Majority</div>
+                  {#each majorityVotes as v}
+                    <div class="vote-justice">{v.member.last_name}</div>
+                  {/each}
+                </div>
+                <div class="vote-col">
+                  <div class="vote-col-label">Minority</div>
+                  {#each minorityVotes as v}
+                    <div class="vote-justice">{v.member.last_name}</div>
+                  {/each}
+                </div>
+              </div>
+            </div>
+          {/if}
+
+          {#if caseInfo.question}
+            <div class="modal-section">
+              <h3 class="modal-section-title">Question Presented</h3>
+              <div class="modal-html">{@html cleanHtml(caseInfo.question)}</div>
+            </div>
+          {/if}
+
+          {#if caseInfo.facts_of_the_case}
+            <div class="modal-section">
+              <button class="modal-section-toggle" onclick={() => factsExpanded = !factsExpanded}>
+                <h3 class="modal-section-title">Facts of the Case</h3>
+                <span class="modal-chevron">{factsExpanded ? '▲' : '▼'}</span>
+              </button>
+              <div class="modal-collapsible" class:expanded={factsExpanded}>
+                <div class="modal-html">{@html cleanHtml(caseInfo.facts_of_the_case)}</div>
+              </div>
+            </div>
+          {/if}
+
+          {#if caseInfo.conclusion}
+            <div class="modal-section">
+              <button class="modal-section-toggle" onclick={() => conclusionExpanded = !conclusionExpanded}>
+                <h3 class="modal-section-title">Conclusion</h3>
+                <span class="modal-chevron">{conclusionExpanded ? '▲' : '▼'}</span>
+              </button>
+              <div class="modal-collapsible" class:expanded={conclusionExpanded}>
+                <div class="modal-html">{@html cleanHtml(caseInfo.conclusion)}</div>
+              </div>
+            </div>
+          {/if}
+          <p class="modal-oyez-credit">
+            Case information courtesy of <a href="https://www.oyez.org/cases/{termFromUrl(pdfUrl)}/{opinion.docketNumber}" target="_blank" rel="noopener">Oyez</a>
+          </p>
+        {/if}
+      </div>
+    </div>
   {/if}
 
   <!-- Disclaimer overlay (one-time) -->
@@ -1592,5 +1748,224 @@
     font-family: var(--font-ui);
     font-size: 0.75rem;
     margin: 0;
+  }
+
+  .dropdown-btn {
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 40;
+  }
+
+  .modal {
+    position: fixed;
+    left: 5%;
+    right: 5%;
+    top: 8%;
+    bottom: 8%;
+    z-index: 41;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    max-width: 600px;
+    margin: 0 auto;
+    border-radius: 12px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .modal-title {
+    flex: 1;
+    font-family: var(--font-ui);
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .modal-close {
+    background: none;
+    border: none;
+    font-size: 1.4rem;
+    line-height: 1;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0 0.25rem;
+    flex-shrink: 0;
+  }
+
+  .modal-close:hover {
+    color: var(--text);
+  }
+
+  .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .modal-description {
+    font-family: var(--font-ui);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    font-style: italic;
+    line-height: 1.5;
+    margin-bottom: 1.25rem;
+  }
+
+  .modal-section {
+    border-top: 1px solid var(--border);
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .modal-section-title {
+    font-family: var(--font-ui);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+  }
+
+  .modal-section-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    margin-bottom: 0.5rem;
+  }
+
+  .modal-section-toggle .modal-section-title {
+    margin-bottom: 0;
+  }
+
+  .modal-chevron {
+    font-size: 0.6rem;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+
+  .modal-collapsible {
+    position: relative;
+    max-height: 4.5rem;
+    overflow: hidden;
+  }
+
+  .modal-collapsible::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2.5rem;
+    background: linear-gradient(transparent, var(--bg));
+    pointer-events: none;
+  }
+
+  .modal-collapsible.expanded {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .modal-collapsible.expanded::after {
+    display: none;
+  }
+
+  .modal-html {
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  .modal-html :global(p) {
+    margin-bottom: 0.6em;
+  }
+
+  .modal-html :global(p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .modal-html :global(p:last-child + *) {
+    margin-top: 0;
+  }
+
+  .vote-summary {
+    font-family: var(--font-ui);
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .vote-winner {
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: var(--text-secondary);
+  }
+
+  .vote-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem 1.5rem;
+  }
+
+  .vote-col-label {
+    font-family: var(--font-ui);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+  }
+
+  .vote-justice {
+    font-family: var(--font-ui);
+    font-size: 0.9rem;
+    color: var(--text);
+    padding: 0.15rem 0;
+  }
+
+  .modal-oyez-credit {
+    font-family: var(--font-ui);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 1rem 0 0.25rem;
+    border-top: 1px solid var(--border);
+    margin-top: 0.5rem;
   }
 </style>
