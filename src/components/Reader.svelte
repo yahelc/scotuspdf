@@ -121,6 +121,25 @@
     try { localStorage.setItem('scotus-disclaimer-seen', '1'); } catch {}
   }
 
+  const BASE = 'https://api.oyez.org/sites/default/files';
+  const JUSTICE_THUMBS: Record<string, string> = {
+    'ROBERTS':   `${BASE}/images/people/john_g_roberts_jr/john_g_roberts_jr.thumb.png`,
+    'THOMAS':    `${BASE}/images/people/clarence_thomas/clarence_thomas.thumb.png`,
+    'ALITO':     `${BASE}/images/people/samuel_a_alito_jr/samuel_a_alito_jr.thumb.png`,
+    'SOTOMAYOR': `${BASE}/images/people/sonia_sotomayor/sonia_sotomayor.thumb.png`,
+    'KAGAN':     `${BASE}/images/people/elena_kagan/elena_kagan.thumb.png`,
+    'GORSUCH':   `${BASE}/filefield_paths/neil_gorsuch.thumb__0.png`,
+    'KAVANAUGH': `${BASE}/filefield_paths/Kavanaugh-thumb.png`,
+    'BARRETT':   `${BASE}/filefield_paths/barret-thumb.png`,
+    'JACKSON':   `${BASE}/filefield_paths/thumbnail_ketanji_brown_jackson.png`,
+  };
+
+  function justiceThumbUrl(author: string | null): string | null {
+    if (!author) return null;
+    const lastName = author.split(',')[0].trim().toUpperCase();
+    return JUSTICE_THUMBS[lastName] ?? null;
+  }
+
   function cleanHtml(html: string): string {
     return html.replace(/(<p>[\s\u00a0]*<\/p>\s*)+$/gi, '').trim();
   }
@@ -805,11 +824,19 @@
       <nav class="chapter-nav">
         {#each opinion.chapters as chapter}
           {@const readingTime = chapterReadingTime(chapter)}
+          {@const thumbUrl = justiceThumbUrl(chapter.author)}
           <button
             class="chapter-item"
             class:active={chapter.id === currentChapterId}
             onclick={() => jumpToChapter(chapter.id)}
           >
+            {#if thumbUrl}
+              <div class="chapter-avatar">
+                <img src={thumbUrl} alt={chapter.author ?? ''} />
+              </div>
+            {:else}
+              <div class="chapter-avatar-placeholder"></div>
+            {/if}
             <div class="chapter-item-main">
               <span class="chapter-title">{chapter.title}</span>
               {#if chapter.author || readingTime}
@@ -1245,6 +1272,31 @@
   .chapter-title {
     font-weight: 600;
     font-size: 0.9rem;
+  }
+
+  .chapter-avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+  }
+
+  .chapter-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center top;
+    transform: scale(1.4);
+    transform-origin: center top;
+    filter: grayscale(20%);
+  }
+
+  .chapter-avatar-placeholder {
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
   }
 
   .chapter-meta {
