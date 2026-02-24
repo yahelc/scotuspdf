@@ -550,6 +550,19 @@
     }
   }
 
+  function chapterReadingTime(chapter: { paragraphs: { text: string }[] }): string {
+    let words = 0;
+    for (const para of chapter.paragraphs) {
+      // Strip markers: {{h1:...}}, {{bp:...}}, {{bpj:...}}, {{fn:N}}
+      const cleaned = para.text
+        .replace(/\{\{(?:h[123]|bp|bpj):([^}]*)\}\}/g, '$1')
+        .replace(/\{\{fn:\d+\}\}/g, '');
+      words += cleaned.trim().split(/\s+/).filter(Boolean).length;
+    }
+    const mins = Math.ceil(words / 265);
+    return mins < 1 ? '' : `~${mins}m`;
+  }
+
   function currentChapterTitle(): string {
     if (!opinion) return '';
     const ch = opinion.chapters.find((c) => c.id === currentChapterId);
@@ -718,15 +731,20 @@
     <div class="chapter-overlay" onclick={() => showChapterNav = false}>
       <nav class="chapter-nav">
         {#each opinion.chapters as chapter}
+          {@const readingTime = chapterReadingTime(chapter)}
           <button
             class="chapter-item"
             class:active={chapter.id === currentChapterId}
             onclick={() => jumpToChapter(chapter.id)}
           >
-            <span class="chapter-title">{chapter.title}</span>
-            {#if chapter.author}
-              <span class="chapter-author">{chapter.author}</span>
-            {/if}
+            <div class="chapter-item-main">
+              <span class="chapter-title">{chapter.title}</span>
+              {#if chapter.author || readingTime}
+                <span class="chapter-meta">
+                  {#if chapter.author}{chapter.author}{/if}{#if chapter.author && readingTime}<span class="chapter-meta-sep">·</span>{/if}{#if readingTime}<span class="chapter-reading-time">{readingTime}</span>{/if}
+                </span>
+              {/if}
+            </div>
           </button>
         {/each}
       </nav>
@@ -1039,7 +1057,9 @@
 
   .chapter-item {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.75rem;
     padding: 0.75rem 1rem;
     border: none;
     background: none;
@@ -1048,6 +1068,13 @@
     font-family: var(--font-ui);
     color: var(--text);
     border-bottom: 1px solid var(--border);
+  }
+
+  .chapter-item-main {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
   }
 
   .chapter-item:hover {
@@ -1064,9 +1091,20 @@
     font-size: 0.9rem;
   }
 
-  .chapter-author {
+  .chapter-meta {
     font-size: 0.8rem;
     color: var(--text-secondary);
+  }
+
+  .chapter-meta-sep {
+    margin: 0 0.4rem;
+    opacity: 0.3;
+  }
+
+  .chapter-reading-time {
+    font-size: 0.7rem;
+    opacity: 0.6;
+    font-variant-numeric: tabular-nums;
   }
 
   .section-nav-backdrop {

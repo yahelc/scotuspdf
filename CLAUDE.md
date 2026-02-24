@@ -19,6 +19,8 @@ npm run preview  # Preview production build locally
 rm -rf node_modules/.vite && npx astro dev --host
 ```
 
+**Workflow**: After making UI changes, always start the dev server with `--host` and tell the user to check the `192.168.x.x` address on their phone before deploying to production. Never deploy to production without giving the user a chance to test on mobile first.
+
 **Deploying**:
 ```bash
 npm run deploy
