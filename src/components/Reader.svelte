@@ -51,8 +51,14 @@
   let showSectionNav = $state(false);
   let sectionNavPos = $state({ top: 0, left: 0 });
 
-  // Settings pane
-  let showSettings = $state(false);
+  // Combined menu
+  let showMenu = $state(false);
+  let menuPos = $state({ top: 0, right: 0 });
+
+  function termFromUrl(url: string): string {
+    const m = url.match(/\/(\d{2})pdf\//);
+    return m ? `20${m[1]}` : '';
+  }
 
   // Paged mode state
   let currentPage = $state(0);
@@ -595,7 +601,7 @@
         {opinion.caseTitle}
       </button>
       <div class="toolbar-row">
-        <button class="chapter-btn" onclick={() => { showChapterNav = !showChapterNav; showSectionNav = false; }}>
+        <button class="chapter-btn" onclick={() => { showChapterNav = !showChapterNav; showSectionNav = false; showMenu = false; }}>
           {currentChapterTitle()}
           <span class="chevron">{showChapterNav ? '\u25B2' : '\u25BC'}</span>
         </button>
@@ -618,46 +624,46 @@
       </div>
     </div>
     <div class="toolbar-controls">
-      <button class="settings-btn" onclick={() => showSettings = !showSettings} aria-label="Settings">
-        <span class="settings-icon">Aa</span>
-      </button>
+      <button class="toolbar-btn" onclick={(e) => {
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        menuPos = { top: rect.bottom + 4, right: window.innerWidth - rect.right };
+        showMenu = !showMenu;
+        showSectionNav = false;
+        showChapterNav = false;
+      }} aria-label="Menu">⋮</button>
     </div>
   </header>
 
-  <!-- Settings pane -->
-  {#if showSettings}
+  <!-- Combined menu -->
+  {#if showMenu}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="settings-overlay" onclick={() => showSettings = false}>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="settings-pane" onclick={(e) => e.stopPropagation()}>
+    <div class="section-nav-backdrop" onclick={() => showMenu = false}></div>
+    <div class="section-nav menu-panel" style="top: {menuPos.top}px; right: {menuPos.right}px; left: auto">
+      <div class="menu-section-label">Links</div>
+      <a class="dropdown-link" href={opinion.sourceUrl} target="_blank" rel="noopener">Original PDF ↗</a>
+      {#if opinion.docketNumber}
+        <a class="dropdown-link" href="https://www.google.com/search?q={encodeURIComponent(`${opinion.caseTitle} ${opinion.docketNumber} site:scotusblog.com`)}&btnI=1" target="_blank" rel="noopener">SCOTUSblog ↗</a>
+        {#if termFromUrl(pdfUrl)}
+          <a class="dropdown-link" href="https://www.oyez.org/cases/{termFromUrl(pdfUrl)}/{opinion.docketNumber}" target="_blank" rel="noopener">Oyez ↗</a>
+        {/if}
+      {/if}
+      <div class="menu-section-label">Settings</div>
+      <div class="menu-settings">
         <label class="settings-label">
           Text size
-          <input
-            type="range"
-            min="14"
-            max="28"
-            value={prefs.fontSize}
-            oninput={updateFontSize}
-            class="font-slider"
-            aria-label="Text size"
-          />
+          <input type="range" min="14" max="28" value={prefs.fontSize} oninput={updateFontSize} class="font-slider" aria-label="Text size" />
         </label>
         <label class="settings-label">
           Reading mode
           <div class="mode-toggle">
-            <button
-              class="mode-btn"
-              class:active={prefs.viewMode === 'scroll'}
-              onclick={() => setViewMode('scroll')}
-            >Scroll</button>
-            <button
-              class="mode-btn"
-              class:active={prefs.viewMode === 'paged'}
-              onclick={() => setViewMode('paged')}
-            >Paged</button>
+            <button class="mode-btn" class:active={prefs.viewMode === 'scroll'} onclick={() => setViewMode('scroll')}>Scroll</button>
+            <button class="mode-btn" class:active={prefs.viewMode === 'paged'} onclick={() => setViewMode('paged')}>Paged</button>
           </div>
         </label>
       </div>
+      <div class="menu-section-label">Help</div>
+      <a class="dropdown-link" href="https://github.com/yahelc/scotuspdf" target="_blank" rel="noopener">GitHub repo ↗</a>
+      <a class="dropdown-link" href="https://github.com/yahelc/scotuspdf/issues/new?title={encodeURIComponent('Bug report')}&body={encodeURIComponent(`**Page:** ${window.location.href}\n\n**Describe the issue:**\n`)}" target="_blank" rel="noopener">Report an issue ↗</a>
     </div>
   {/if}
 
@@ -921,7 +927,7 @@
   }
 
   .font-slider {
-    width: 80px;
+    width: 100%;
     accent-color: var(--accent);
   }
 
@@ -1326,44 +1332,69 @@
     color: var(--text-secondary);
   }
 
-  .settings-btn {
+  .toolbar-btn {
     background: none;
     border: 1px solid var(--border);
     border-radius: 4px;
     color: var(--text-secondary);
     cursor: pointer;
-    padding: 0.15rem 0.4rem;
+    padding: 0.15rem 0.5rem;
+    font-family: var(--font-ui);
+    font-size: 0.85rem;
+    line-height: 1;
     display: flex;
     align-items: center;
   }
 
-  .settings-btn:hover {
+  .toolbar-btn:hover {
     color: var(--text);
     background: var(--bg);
   }
 
-  .settings-icon {
-    font-family: var(--font-body);
+  .dropdown-link {
+    display: block;
+    padding: 0.5rem 1rem;
+    font-family: var(--font-ui);
     font-size: 0.85rem;
-    font-weight: 600;
-    line-height: 1;
-  }
-
-  .settings-overlay {
-    position: fixed;
-    inset: 0;
-    top: 49px;
-    z-index: 20;
-    background: rgba(0, 0, 0, 0.3);
-  }
-
-  .settings-pane {
-    background: var(--bg-surface);
+    color: var(--text);
+    text-decoration: none;
     border-bottom: 1px solid var(--border);
-    padding: 1rem;
+    white-space: nowrap;
+  }
+
+  .dropdown-link:last-child {
+    border-bottom: none;
+  }
+
+  .dropdown-link:hover {
+    background: var(--bg);
+  }
+
+
+  .menu-panel {
+    min-width: 180px;
+  }
+
+  .menu-section-label {
+    font-family: var(--font-ui);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    padding: 0.5rem 1rem 0.25rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .menu-panel > .menu-section-label:first-child {
+    border-top: none;
+  }
+
+  .menu-settings {
+    padding: 0.5rem 1rem 0.75rem;
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.75rem;
   }
 
   .settings-label {

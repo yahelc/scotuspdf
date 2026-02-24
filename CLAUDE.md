@@ -14,9 +14,9 @@ npm run build    # Build for production (outputs to dist/)
 npm run preview  # Preview production build locally
 ```
 
-**Important**: When restarting the dev server, always flush the Vite cache first:
+**Important**: When restarting the dev server, always flush the Vite cache and expose on the local network (for mobile testing):
 ```bash
-rm -rf node_modules/.vite && npm run dev
+rm -rf node_modules/.vite && npx astro dev --host
 ```
 
 **Deploying**:
