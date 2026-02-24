@@ -1,6 +1,7 @@
 export interface Preferences {
   fontSize: number;
   viewMode: 'paged' | 'scroll';
+  theme: 'auto' | 'light' | 'dark';
 }
 
 export interface ReadingPosition {
@@ -15,6 +16,7 @@ const POSITION_PREFIX = 'scotuspdf:position:';
 const DEFAULT_PREFS: Preferences = {
   fontSize: 18,
   viewMode: 'scroll',
+  theme: 'auto',
 };
 
 export function loadPreferences(): Preferences {

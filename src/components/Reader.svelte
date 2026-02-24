@@ -49,11 +49,11 @@
   // Section breadcrumb
   let sectionBreadcrumb = $state('');
   let showSectionNav = $state(false);
-  let sectionNavPos = $state({ top: 0, left: 0 });
+  let sectionNavPos = $state({ top: 0, left: 0, maxHeight: 0 });
 
   // Combined menu
   let showMenu = $state(false);
-  let menuPos = $state({ top: 0, right: 0 });
+  let menuPos = $state({ top: 0, right: 0, maxHeight: 0 });
 
   // One-time disclaimer
   let showDisclaimer = $state(false);
@@ -540,6 +540,16 @@
     savePreferences(prefs);
   }
 
+  function setTheme(theme: 'auto' | 'light' | 'dark') {
+    prefs.theme = theme;
+    savePreferences(prefs);
+    if (theme === 'auto') {
+      delete document.documentElement.dataset.theme;
+    } else {
+      document.documentElement.dataset.theme = theme;
+    }
+  }
+
   function currentChapterTitle(): string {
     if (!opinion) return '';
     const ch = opinion.chapters.find((c) => c.id === currentChapterId);
@@ -635,7 +645,8 @@
           {#if subs.length > 0}
             <button class="section-breadcrumb-btn" onclick={(e) => {
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              sectionNavPos = { top: rect.bottom + 4, left: rect.left };
+              const top = rect.bottom + 4;
+              sectionNavPos = { top, left: rect.left, maxHeight: window.innerHeight - top - 8 };
               showSectionNav = !showSectionNav;
               showChapterNav = false;
             }}>
@@ -651,7 +662,8 @@
     <div class="toolbar-controls">
       <button class="toolbar-btn" onclick={(e) => {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        menuPos = { top: rect.bottom + 4, right: window.innerWidth - rect.right };
+        const top = rect.bottom + 4;
+        menuPos = { top, right: window.innerWidth - rect.right, maxHeight: window.innerHeight - top - 8 };
         showMenu = !showMenu;
         showSectionNav = false;
         showChapterNav = false;
@@ -663,7 +675,7 @@
   {#if showMenu}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="section-nav-backdrop" onclick={() => showMenu = false}></div>
-    <div class="section-nav menu-panel" style="top: {menuPos.top}px; right: {menuPos.right}px; left: auto">
+    <div class="section-nav menu-panel" style="top: {menuPos.top}px; right: {menuPos.right}px; left: auto; max-height: {menuPos.maxHeight}px">
       <div class="menu-section-label">Links</div>
       <a class="dropdown-link" href={opinion.sourceUrl} target="_blank" rel="noopener">Original PDF ↗</a>
       {#if opinion.docketNumber}
@@ -683,6 +695,14 @@
           <div class="mode-toggle">
             <button class="mode-btn" class:active={prefs.viewMode === 'scroll'} onclick={() => setViewMode('scroll')}>Scroll</button>
             <button class="mode-btn" class:active={prefs.viewMode === 'paged'} onclick={() => setViewMode('paged')}>Paged</button>
+          </div>
+        </label>
+        <label class="settings-label">
+          Theme
+          <div class="mode-toggle">
+            <button class="mode-btn" class:active={prefs.theme === 'auto'} onclick={() => setTheme('auto')}>Auto</button>
+            <button class="mode-btn" class:active={prefs.theme === 'light'} onclick={() => setTheme('light')}>Light</button>
+            <button class="mode-btn" class:active={prefs.theme === 'dark'} onclick={() => setTheme('dark')}>Dark</button>
           </div>
         </label>
       </div>
@@ -716,7 +736,7 @@
   {#if showSectionNav}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="section-nav-backdrop" onclick={() => showSectionNav = false}></div>
-    <nav class="section-nav" style="top: {sectionNavPos.top}px; left: {sectionNavPos.left}px">
+    <nav class="section-nav" style="top: {sectionNavPos.top}px; left: {sectionNavPos.left}px; max-height: {sectionNavPos.maxHeight}px">
       {#each currentChapterSubchapters() as sub}
         <button
           class="subchapter-item"
@@ -1062,7 +1082,6 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    max-height: 50vh;
     overflow-y: auto;
     min-width: 5rem;
     display: flex;

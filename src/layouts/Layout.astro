@@ -15,6 +15,14 @@ const { title, class: className } = Astro.props;
     <meta name="description" content="Read Supreme Court opinions in a mobile-friendly format" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>{title}</title>
+    <script is:inline>
+      try {
+        const p = JSON.parse(localStorage.getItem('scotuspdf:prefs') || '{}');
+        if (p.theme === 'dark' || p.theme === 'light') {
+          document.documentElement.dataset.theme = p.theme;
+        }
+      } catch {}
+    </script>
   </head>
   <body class={className}>
     <slot />
@@ -35,7 +43,7 @@ const { title, class: className } = Astro.props;
   }
 
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #1a1a1a;
       --bg-surface: #252525;
       --text: #e0ddd4;
@@ -44,6 +52,16 @@ const { title, class: className } = Astro.props;
       --accent-light: #e87c71;
       --border: #333;
     }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #1a1a1a;
+    --bg-surface: #252525;
+    --text: #e0ddd4;
+    --text-secondary: #999;
+    --accent: #d4564a;
+    --accent-light: #e87c71;
+    --border: #333;
   }
 
   * {
