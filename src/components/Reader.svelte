@@ -711,6 +711,9 @@
     return segments;
   }
 
+  // In-memory cache: "volume:page" → { info, slipUrl }
+  const citeCache = new Map<string, { info: OyezCase | null; slipUrl: string | null }>();
+
   // Citation modal state
   let showCiteModal = $state(false);
   let citeModalVolume = $state('');
@@ -726,12 +729,24 @@
     citeModalVolume = volume;
     citeModalPage = page;
     citeModalTitle = caseName || `${volume} U.S. ${page}`;
-    citeModalInfo = null;
-    citeModalSlipUrl = null;
-    citeModalLoading = true;
     citeFactsExpanded = false;
     citeConclusionExpanded = false;
     showCiteModal = true;
+
+    // Return immediately from cache if we've already looked this up
+    const cacheKey = `${volume}:${page}`;
+    const cached = citeCache.get(cacheKey);
+    if (cached) {
+      citeModalInfo = cached.info;
+      citeModalSlipUrl = cached.slipUrl;
+      citeModalLoading = false;
+      if (cached.info) citeModalTitle = cached.info.name ?? citeModalTitle;
+      return;
+    }
+
+    citeModalInfo = null;
+    citeModalSlipUrl = null;
+    citeModalLoading = true;
     try {
       const vol = parseInt(volume);
       const pg = parseInt(page);
@@ -798,13 +813,20 @@
           if (detail.term && parseInt(detail.term) >= 2019 && detail.docket_number) {
             fetch(`/api/find-slip?docket=${encodeURIComponent(detail.docket_number)}&term=${encodeURIComponent(detail.term)}`)
               .then(r => r.json())
-              .then(data => { if (data.term && data.filename) citeModalSlipUrl = `/read/${data.term}/${data.filename}`; })
+              .then(data => {
+                if (data.term && data.filename) {
+                  citeModalSlipUrl = `/read/${data.term}/${data.filename}`;
+                  citeCache.set(cacheKey, { info: citeModalInfo, slipUrl: citeModalSlipUrl });
+                }
+              })
               .catch(() => {});
           }
         }
       }
     } catch {}
     citeModalLoading = false;
+    // Cache the result (slipUrl may still be pending, but we update it above when it resolves)
+    citeCache.set(cacheKey, { info: citeModalInfo, slipUrl: citeModalSlipUrl });
   }
 
   function handleRefClick(direction: string, _page: string) {
