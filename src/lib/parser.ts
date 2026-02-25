@@ -14,9 +14,12 @@ interface PageTextContent {
 
 // Known justices for name normalization
 const KNOWN_JUSTICES: Record<string, string> = {
-  ROBERTS: 'Roberts', THOMAS: 'Thomas', ALITO: 'Alito',
-  SOTOMAYOR: 'Sotomayor', KAGAN: 'Kagan', GORSUCH: 'Gorsuch',
-  KAVANAUGH: 'Kavanaugh', BARRETT: 'Barrett', JACKSON: 'Jackson',
+  REHNQUIST: 'Rehnquist', STEVENS: 'Stevens', OCONNOR: "O'Connor",
+  SCALIA: 'Scalia', KENNEDY: 'Kennedy', SOUTER: 'Souter',
+  THOMAS: 'Thomas', GINSBURG: 'Ginsburg', BREYER: 'Breyer',
+  ROBERTS: 'Roberts', ALITO: 'Alito', SOTOMAYOR: 'Sotomayor',
+  KAGAN: 'Kagan', GORSUCH: 'Gorsuch', KAVANAUGH: 'Kavanaugh',
+  BARRETT: 'Barrett', JACKSON: 'Jackson',
 };
 
 interface SectionHeader {

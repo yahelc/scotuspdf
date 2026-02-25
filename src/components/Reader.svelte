@@ -136,8 +136,16 @@
 
   const BASE = 'https://api.oyez.org/sites/default/files';
   const JUSTICE_THUMBS: Record<string, string> = {
-    'ROBERTS':   `${BASE}/images/people/john_g_roberts_jr/john_g_roberts_jr.thumb.png`,
+    'REHNQUIST': `${BASE}/images/people/william_h_rehnquist/william_h_rehnquist.thumb.png`,
+    'STEVENS':   `${BASE}/images/people/john_paul_stevens/john_paul_stevens.thumb.png`,
+    'OCONNOR':   `${BASE}/images/people/sandra_day_oconnor/sandra_day_oconnor.thumb.png`,
+    'SCALIA':    `${BASE}/images/people/antonin_scalia/antonin_scalia.thumb.png`,
+    'KENNEDY':   `${BASE}/images/people/anthony_m_kennedy/anthony_m_kennedy.thumb.png`,
+    'SOUTER':    `${BASE}/images/people/david_h_souter/david_h_souter.thumb.png`,
     'THOMAS':    `${BASE}/images/people/clarence_thomas/clarence_thomas.thumb.png`,
+    'GINSBURG':  `${BASE}/images/people/ruth_bader_ginsburg/ruth_bader_ginsburg.thumb.png`,
+    'BREYER':    `${BASE}/images/people/stephen_g_breyer/stephen_g_breyer.thumb.png`,
+    'ROBERTS':   `${BASE}/images/people/john_g_roberts_jr/john_g_roberts_jr.thumb.png`,
     'ALITO':     `${BASE}/images/people/samuel_a_alito_jr/samuel_a_alito_jr.thumb.png`,
     'SOTOMAYOR': `${BASE}/images/people/sonia_sotomayor/sonia_sotomayor.thumb.png`,
     'KAGAN':     `${BASE}/images/people/elena_kagan/elena_kagan.thumb.png`,
@@ -149,7 +157,7 @@
 
   function justiceThumbUrl(author: string | null): string | null {
     if (!author) return null;
-    const lastName = author.split(',')[0].trim().toUpperCase();
+    const lastName = author.split(',')[0].trim().toUpperCase().replace(/'/g, '');
     return JUSTICE_THUMBS[lastName] ?? null;
   }
 
