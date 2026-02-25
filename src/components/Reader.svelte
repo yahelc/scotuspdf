@@ -41,7 +41,9 @@
   let activeChapterProgress = $derived.by(() => {
     if (prefs.viewMode === 'paged') {
       const m = chapterMetrics[activeChapterIndex];
-      return m ? (currentPage - m.startPage) / Math.max(1, m.endPage - m.startPage) : 0;
+      if (!m) return 0;
+      const totalPages = m.endPage - m.startPage + 1;
+      return (currentPage - m.startPage + 1) / totalPages;
     }
     return chapterProgress;
   });
@@ -332,7 +334,13 @@
       const viewportHeight = contentEl.clientHeight;
       const scrolledPast = -rect.top + 80;
       const chapterHeight = activeChapterEl.offsetHeight;
-      chapterProgress = Math.min(1, Math.max(0, scrolledPast / (chapterHeight - viewportHeight)));
+      const scrollableRange = chapterHeight - viewportHeight;
+      if (scrollableRange > 0) {
+        chapterProgress = Math.min(1, Math.max(0, scrolledPast / scrollableRange));
+      } else {
+        // Chapter fits in viewport: progress based on how far it has scrolled through view
+        chapterProgress = Math.min(1, Math.max(0, scrolledPast / Math.max(1, chapterHeight)));
+      }
     }
 
     // Track section breadcrumb
@@ -374,16 +382,24 @@
     if (!opinion || !contentEl) return;
     const metrics: ChapterMetric[] = [];
     if (prefs.viewMode === 'paged' && pageWidth > 0) {
-      let docPages = 0;
+      // In CSS multi-column layout, offsetWidth is always the column width (not the full
+      // horizontal span), so we can't use it to compute endPage. Instead, derive each
+      // chapter's page range from the *next* chapter's offsetLeft.
+      const chapterEls: { id: string; el: HTMLElement }[] = [];
       for (const ch of opinion.chapters) {
         const el = document.getElementById(ch.id);
-        if (!el) continue;
-        const startPage = Math.floor(el.offsetLeft / pageWidth);
-        const endPage = Math.max(startPage, Math.ceil((el.offsetLeft + el.offsetWidth) / pageWidth) - 1);
-        metrics.push({ id: ch.id, sizeFraction: 0, startPage, endPage });
-        docPages = Math.max(docPages, endPage + 1);
+        if (el) chapterEls.push({ id: ch.id, el });
       }
-      for (const m of metrics) m.sizeFraction = (m.endPage - m.startPage + 1) / Math.max(1, docPages);
+      const docPages = Math.max(1, Math.round(contentEl.scrollWidth / pageWidth));
+      for (let i = 0; i < chapterEls.length; i++) {
+        const { id, el } = chapterEls[i];
+        const startPage = Math.round(el.offsetLeft / pageWidth);
+        const endPage = i < chapterEls.length - 1
+          ? Math.round(chapterEls[i + 1].el.offsetLeft / pageWidth) - 1
+          : docPages - 1;
+        metrics.push({ id, sizeFraction: 0, startPage, endPage: Math.max(startPage, endPage) });
+      }
+      for (const m of metrics) m.sizeFraction = (m.endPage - m.startPage + 1) / docPages;
     } else {
       let totalHeight = 0;
       const els: [string, HTMLElement][] = [];
