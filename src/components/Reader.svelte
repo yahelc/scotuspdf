@@ -791,7 +791,12 @@
           if (!Array.isArray(cases)) continue;
           for (const c of cases) {
             const oyezName = (c.name || '').toLowerCase();
-            if (p1 && p2 && oyezName.includes(p1) && oyezName.includes(p2)) {
+            const p1Match = p1 && oyezName.includes(p1);
+            const p2Match = p2 && oyezName.includes(p2);
+            // Match if both parties found, OR p1 is distinctive (3+ words) and matches alone.
+            // The 3-word threshold handles abbreviations in p2 (e.g. "OSHA", "EPA", "NLRB")
+            // that don't appear verbatim in Oyez's full agency names.
+            if (p1Match && (p2Match || p1.split(/\s+/).length >= 3)) {
               foundHref = c.href;
               break outerName;
             }
