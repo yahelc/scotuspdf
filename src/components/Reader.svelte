@@ -61,11 +61,13 @@
   // Case info modal
   interface OyezCase {
     href: string;
+    name: string;
     question: string;
     facts_of_the_case: string;
     conclusion: string;
     term: string;
     docket_number: string;
+    timeline: Array<{ event: string; dates: number[] }>;
     decisions: Array<{
       description: string;
       majority_vote: number;
@@ -151,6 +153,12 @@
   function termFromUrl(url: string): string {
     const m = url.match(/\/(\d{2})pdf\//);
     return m ? `20${m[1]}` : '';
+  }
+
+  function oyezDate(timeline: Array<{ event: string; dates: number[] }> | undefined, event: string): string {
+    const entry = timeline?.find(e => e.event === event);
+    if (!entry?.dates?.[0]) return '';
+    return new Date(entry.dates[0] * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   }
 
   // Paged mode state
@@ -793,10 +801,12 @@
             const oyezName = (c.name || '').toLowerCase();
             const p1Match = p1 && oyezName.includes(p1);
             const p2Match = p2 && oyezName.includes(p2);
-            // Match if both parties found, OR p1 is distinctive (3+ words) and matches alone.
-            // The 3-word threshold handles abbreviations in p2 (e.g. "OSHA", "EPA", "NLRB")
-            // that don't appear verbatim in Oyez's full agency names.
-            if (p1Match && (p2Match || p1.split(/\s+/).length >= 3)) {
+            const p1Distinctive = p1.split(/\s+/).length >= 3;
+            const p2Distinctive = p2.split(/\s+/).length >= 2;
+            // Match if both parties found, OR one party is distinctive and matches alone.
+            // - p1 with 3+ words: handles abbreviations in p2 (e.g. "OSHA", "EPA")
+            // - p2 with 2+ words: handles abbreviations in p1 (e.g. "FCC", "SEC")
+            if ((p1Match && (p2Match || p1Distinctive)) || (p2Match && p2Distinctive)) {
               foundHref = c.href;
               break outerName;
             }
@@ -1045,9 +1055,18 @@
       <div class="modal-body">
         {#if caseInfo}
           {@const dec = caseInfo.decisions?.[0]}
+          {@const argued = oyezDate(caseInfo.timeline, 'Argued')}
+          {@const decided = oyezDate(caseInfo.timeline, 'Decided')}
 
           {#if dec?.description}
             <p class="modal-description">{dec.description}</p>
+          {/if}
+
+          {#if argued || decided}
+            <div class="modal-dates">
+              {#if argued}<span>Argued: {argued}</span>{/if}
+              {#if decided}<span>Decided: {decided}</span>{/if}
+            </div>
           {/if}
 
           {#if dec?.votes?.length}
@@ -1134,9 +1153,18 @@
         {:else}
           {#if citeModalInfo}
             {@const dec = citeModalInfo.decisions?.[0]}
+            {@const argued = oyezDate(citeModalInfo.timeline, 'Argued')}
+            {@const decided = oyezDate(citeModalInfo.timeline, 'Decided')}
 
             {#if dec?.description}
               <p class="modal-description">{dec.description}</p>
+            {/if}
+
+            {#if argued || decided}
+              <div class="modal-dates">
+                {#if argued}<span>Argued: {argued}</span>{/if}
+                {#if decided}<span>Decided: {decided}</span>{/if}
+              </div>
             {/if}
 
             {#if dec?.votes?.length}
@@ -2181,6 +2209,15 @@
     font-style: italic;
     line-height: 1.5;
     margin-bottom: 1.25rem;
+  }
+
+  .modal-dates {
+    display: flex;
+    gap: 1.25rem;
+    font-family: var(--font-ui);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
   }
 
   .modal-section {
