@@ -119,6 +119,35 @@ export function parseSectionHeader(headerText: string): SectionHeader | null {
     }
   }
 
+  // Title-case single justice (preliminary print running header format):
+  // "Gorsuch, J., concurring" / "Roberts, C. J., dissenting"
+  // Extra spaces around commas (e.g. "J. , concurring") are tolerated.
+  const titleJusticeMatch = raw.match(
+    /^([A-Z][a-z]+)\s*,\s*(?:C\.\s*)?J\.\s*,\s*(concurring|dissenting)(?:\s+in\s+(?:the\s+)?(?:judgment|part))?/i
+  );
+  if (titleJusticeMatch) {
+    const upperName = titleJusticeMatch[1].toUpperCase();
+    const type = titleJusticeMatch[2].toLowerCase();
+    const author = KNOWN_JUSTICES[upperName] ?? titleJusticeMatch[1];
+    const id = `${type}-${upperName.toLowerCase()}`;
+    const title = `${author}, ${type}`;
+    return { raw, normalized: title, id, title, author };
+  }
+
+  // Multi-justice title-case (preliminary print): "Breyer, Sotomayor , and Kagan , JJ., dissenting"
+  // "JJ." indicates a joined opinion by multiple justices. First name is used as primary author.
+  const multiJusticeMatch = raw.match(
+    /^([A-Z][a-z]+)[^.]*JJ\.\s*,\s*(concurring|dissenting)(?:\s+in\s+(?:the\s+)?(?:judgment|part))?/i
+  );
+  if (multiJusticeMatch) {
+    const upperName = multiJusticeMatch[1].toUpperCase();
+    const type = multiJusticeMatch[2].toLowerCase();
+    const author = KNOWN_JUSTICES[upperName] ?? multiJusticeMatch[1];
+    const id = `${type}-${upperName.toLowerCase()}`;
+    const title = `${author}, ${type}`;
+    return { raw, normalized: title, id, title, author };
+  }
+
   return null;
 }
 
@@ -527,6 +556,22 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
   const numPages = doc.numPages;
   const pagesToProcess = Math.min(numPages, options.maxPages ?? numPages);
 
+  // Detect preliminary print format by scanning page 1 for the
+  // "Page Proof Pending Publication" watermark (unique to this format).
+  // Preliminary prints have a two-row top header: running page header at y≈83-84%
+  // and section label at y≈80-81%. Slip opinions have only the section label.
+  let isPrelimPrint = false;
+  {
+    const p1 = await doc.getPage(1);
+    const p1content: PageTextContent = await p1.getTextContent();
+    for (const item of p1content.items) {
+      if ('str' in item && /Page Proof/.test((item as any).str)) {
+        isPrelimPrint = true;
+        break;
+      }
+    }
+  }
+
   // First pass: determine the section header Y position by analyzing page 1
   // The header line (Syllabus, Opinion of the Court, etc.) appears at a consistent Y
   // on SCOTUS PDFs — typically around y=640-650 on a 792pt page
@@ -544,13 +589,23 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
   const pages: PageResult[] = [];
 
   for (let i = 1; i <= pagesToProcess; i++) {
+    // Preliminary prints: page 1 is a cover page (no opinion content).
+    if (isPrelimPrint && i === 1) {
+      pages.push({ sectionHeader: null, bodyLines: [], footnotes: new Map(), footnoteContinuation: '' });
+      continue;
+    }
+
     const page = await doc.getPage(i);
     const textContent: PageTextContent = await page.getTextContent();
     const viewport = page.getViewport({ scale: 1.0 });
     const pageHeight = viewport.height;
 
-    // Adjust header Y range based on page height (proportional)
-    const hYMin = pageHeight * 0.80;
+    // Header band: section labels appear at ~80-84% from bottom.
+    // Preliminary prints: section label at ~80.3-80.8%, running header at ~83-84%.
+    //   Use 0.79 floor to catch dissent labels that drop to ~80.3%.
+    // Slip opinions: section label at ~81.8-82.3%; keep 0.80 floor so body text
+    //   lines just below the header zone don't bleed into the band.
+    const hYMin = isPrelimPrint ? pageHeight * 0.79 : pageHeight * 0.80;
     const hYMax = pageHeight * 0.84;
 
     const allItems: { y: number; x: number; text: string; fontSize: number }[] = [];
@@ -565,11 +620,25 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
       }
     }
 
-    // Extract section header from the header band
+    // Extract section header from the lowest y-position row in the header band.
+    //
+    // Preliminary prints have TWO rows in this band:
+    //   y≈83-84%: running page header ("OCTOBER TERM, 2021" / case name alternating)
+    //   y≈80-81%: section label ("Syllabus", "Per Curiam", "Gorsuch, J., concurring")
+    // Slip opinions have only ONE row (the section label at ~81-82%).
+    //
+    // By selecting only the lowest y row we always get the section label and
+    // ignore the alternating recto/verso running header above it.
     const headerItems = allItems.filter((it) => it.y >= hYMin && it.y <= hYMax);
-    headerItems.sort((a, b) => a.x - b.x);
-    const headerText = headerItems.map((it) => it.text.trim()).join(' ');
-    const sectionHeader = parseSectionHeader(headerText);
+    let sectionHeader: SectionHeader | null = null;
+    if (headerItems.length > 0) {
+      const snapY = (y: number) => Math.round(y / 2) * 2;
+      const minY = Math.min(...headerItems.map((it) => snapY(it.y)));
+      const lowestRowItems = headerItems.filter((it) => snapY(it.y) <= minY + 4);
+      lowestRowItems.sort((a, b) => a.x - b.x);
+      const headerText = lowestRowItems.map((it) => it.text.trim()).join(' ');
+      sectionHeader = parseSectionHeader(headerText);
+    }
 
     // Body text: everything below the header band and above the footer
     const bodyItems = allItems.filter((it) => {
@@ -584,6 +653,9 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
         if (/^\d+$/.test(t)) return false;
         if (/^\(Slip Opinion\)/.test(t)) return false;
       }
+      // Preliminary print watermark ("Page Proof Pending Publication") appears
+      // mid-page at large font size — exclude it from body text on all pages.
+      if (/Page Proof/.test(it.text)) return false;
       return true;
     });
     // Sort by y descending then x ascending. Use coarse rounding (nearest 2px)
