@@ -1162,13 +1162,13 @@
         {/if}
 
         <div class="modal-section cite-modal-render-section">
-          {#if parseInt(citeModalVolume) <= 585}
+          {#if parseInt(citeModalVolume) <= 591}
             <a class="cite-modal-render-link" href="/read/bv/{citeModalVolume}/{citeModalPage}" target="_blank" rel="noopener">
               Try to render this decision →
             </a>
             <p class="cite-modal-render-note">Experimental: reads from the SCOTUS bound volume PDF</p>
           {:else}
-            <p class="cite-modal-render-note">Bound volume not yet published for this case (available through OT2018)</p>
+            <p class="cite-modal-render-note">Bound volume not yet published for this case</p>
           {/if}
         </div>
       </div>
