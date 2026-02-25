@@ -20,8 +20,8 @@ export const GET: APIRoute = async ({ request }) => {
   const volume = parseInt(volumeParam);
   const page = parseInt(pageParam);
 
-  if (isNaN(volume) || isNaN(page) || volume < 502 || page < 1) {
-    return new Response(JSON.stringify({ error: 'Invalid volume or page number' }), {
+  if (isNaN(volume) || isNaN(page) || volume < 502 || volume > 585 || page < 1) {
+    return new Response(JSON.stringify({ error: 'Bound volume not yet published (available through vol. 585, OT2018)' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
