@@ -146,7 +146,7 @@
     'GINSBURG':  `${BASE}/images/people/ruth_bader_ginsburg/ruth_bader_ginsburg.thumb.png`,
     'BREYER':    `${BASE}/images/people/stephen_g_breyer/stephen_g_breyer.thumb.png`,
     'ROBERTS':   `${BASE}/images/people/john_g_roberts_jr/john_g_roberts_jr.thumb.png`,
-    'ALITO':     `${BASE}/images/people/samuel_a_alito_jr/samuel_a_alito_jr.thumb.png`,
+    'ALITO':     `${BASE}/images/people/samuel_alito_jr/samuel_alito_jr.thumb.png`,
     'SOTOMAYOR': `${BASE}/images/people/sonia_sotomayor/sonia_sotomayor.thumb.png`,
     'KAGAN':     `${BASE}/images/people/elena_kagan/elena_kagan.thumb.png`,
     'GORSUCH':   `${BASE}/filefield_paths/neil_gorsuch.thumb__0.png`,
@@ -955,7 +955,6 @@
     </div>
     <div class="toolbar-controls">
       {#if oyezAvailable === true}
-        <a class="toolbar-btn toolbar-oyez-link" href="https://www.oyez.org/cases/{termFromUrl(pdfUrl)}/{opinion.docketNumber}" target="_blank" rel="noopener" aria-label="View on Oyez">Oyez ↗</a>
         <button class="toolbar-btn" onclick={openCaseInfo} aria-label="Case info">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10"/>
@@ -1972,11 +1971,6 @@
   .toolbar-btn:hover {
     color: var(--text);
     background: var(--bg);
-  }
-
-  .toolbar-oyez-link {
-    text-decoration: none;
-    font-size: 0.8rem;
   }
 
   .dropdown-link {

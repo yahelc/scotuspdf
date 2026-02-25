@@ -1018,8 +1018,63 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
     });
   }
 
+  // For preliminary prints: split chapters at inline section openers.
+  // Prelim print running headers sometimes don't update when a new section starts mid-page,
+  // so body text like "Justice Sotomayor, concurring." may be bundled into the wrong chapter.
+  const resolvedDatas: typeof chapterDatas = [];
+  if (isPrelimPrint) {
+    // Matches: "Justice Sotomayor, concurring." / "Chief Justice Roberts, dissenting."
+    // / "Justice Breyer, Justice Sotomayor, and Justice Kagan, dissenting."
+    const bodyOpenerRe =
+      /^(?:Chief\s+)?Justice\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s*,\s*(?:and\s+)?(?:Chief\s+)?Justice\s+[A-Z][a-z]+)*\s*,\s*(concurring|dissenting)(?:\s+in\s+(?:the\s+)?(?:judgment|part))?\.?\s*$/i;
+
+    for (const cd of chapterDatas) {
+      const lines = cd.text.split('\n');
+      let segStart = 0;
+      let segHeader = cd.header;
+      let didSplit = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        const raw = lines[i].trim();
+        if (!raw) continue;
+        const m = raw.match(bodyOpenerRe);
+        if (!m) continue;
+
+        const nameParts = m[1].trim().split(/\s+/);
+        const lastName = nameParts[nameParts.length - 1].toUpperCase();
+        const type = m[2].toLowerCase();
+        const newId = `${type}-${lastName.toLowerCase()}`;
+        if (newId === segHeader.id) continue; // same section, no split needed
+
+        const author = KNOWN_JUSTICES[lastName] ?? nameParts[nameParts.length - 1];
+        const newHeader: SectionHeader = {
+          raw,
+          normalized: `${author}, ${type}`,
+          id: newId,
+          title: `${author}, ${type}`,
+          author,
+        };
+
+        const segText = lines.slice(segStart, i).join('\n');
+        if (segText.trim()) {
+          resolvedDatas.push({ header: segHeader, text: segText, footnotes: didSplit ? new Map() : cd.footnotes });
+        }
+        segStart = i;
+        segHeader = newHeader;
+        didSplit = true;
+      }
+
+      const remainingText = lines.slice(segStart).join('\n');
+      if (remainingText.trim()) {
+        resolvedDatas.push({ header: segHeader, text: remainingText, footnotes: didSplit ? new Map() : cd.footnotes });
+      }
+    }
+  } else {
+    resolvedDatas.push(...chapterDatas);
+  }
+
   // Build final chapters
-  const chapters: Chapter[] = chapterDatas.map((cd) => {
+  const chapters: Chapter[] = resolvedDatas.map((cd) => {
     // Convert footnote map to sorted array
     const footnotes: { id: number; text: string }[] = [];
     for (const [id, text] of cd.footnotes) {
