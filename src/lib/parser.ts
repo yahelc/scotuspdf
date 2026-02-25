@@ -229,6 +229,11 @@ export function buildParagraphs(text: string): Paragraph[] {
     // Fix small-cap rendering artifacts
     trimmed = fixSmallCaps(trimmed);
 
+    // Remove spaces before closing punctuation — artifact of PDF font-boundary splits
+    // where e.g. an italic word and its following Roman comma are separate pdfjs items.
+    // In standard typography these characters are never preceded by a space.
+    trimmed = trimmed.replace(/ ([.,;:!?)\]»\u201d\u2019])/g, '$1');
+
     // Merge with previous paragraph if this is a continuation:
     // previous paragraph doesn't end with sentence-ending punctuation,
     // and this one starts with a lowercase letter.
@@ -685,6 +690,11 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
           curText += `{{fn:${trimmedItem}}}`;
         } else if (isSmallCap) {
           // Join without space — small-cap continuation
+          curText += trimmedItem;
+        } else if (trimmedItem && /^[.,;:!?)\]»\u201d\u2019]/.test(trimmedItem)) {
+          // Closing punctuation that immediately follows the previous word in the PDF
+          // (e.g., a Roman comma after an italic word are separate pdfjs items but
+          // should have no space between them). Always attach without space.
           curText += trimmedItem;
         } else {
           if (!curText) curStartX = item.x;
