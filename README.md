@@ -1,43 +1,49 @@
-# Astro Starter Kit: Minimal
+# SCOTUS PDF Reader
 
-```sh
-npm create astro@latest -- --template minimal
+Turns Supreme Court slip opinion PDFs (formatted for print) into a mobile-friendly reading experience. Live at **https://scotuspdf.netlify.app**.
+
+## Commands
+
+```bash
+npm run dev              # Dev server at localhost:4321
+npm run build            # Production build → dist/
+npm run test             # Run test suite
+npm run deploy           # test → build → deploy to Netlify
+
+npm run build:cite-index # Rebuild the US Reports citation index (see below)
 ```
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
-
-## 🚀 Project Structure
-
-Inside of your Astro project, you'll see the following folders and files:
-
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
+When restarting the dev server, flush the Vite cache and expose on the local network:
+```bash
+rm -rf node_modules/.vite && npx astro dev --host
 ```
 
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
+## Citation Index
 
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
+`src/data/cite-index.json` maps US Reports citations (`volume:page`) to their SCOTUS slip opinion PDFs. It's used to instantly resolve "Try to render" links when a citation is clicked in the reader.
 
-Any static assets, like images, can be placed in the `public/` directory.
+The index covers OT2019–OT2024 (312 entries). It's built by cross-referencing:
+- **supremecourt.gov** slip opinion listing pages — docket → PDF filename
+- **CourtListener API** — docket → US Reports volume:page (Oyez `citation.page` is null for OT2015+)
 
-## 🧞 Commands
+**Refresh after each term wraps up** (typically July):
+```bash
+npm run build:cite-index
+git add src/data/cite-index.json
+git commit -m "Refresh citation index for OT20XX"
+```
 
-All commands are run from the root of the project, from a terminal:
+Current-term cases (OT2025) don't have US Reports citations yet — they're handled by the `/api/find-slip` endpoint which scrapes the SCOTUS listing on demand.
 
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
+## Architecture
 
-## 👀 Want to learn more?
+```
+User → index.astro (paste URL) → /read/:term/:filename
+       Reader.svelte (Svelte 5 island, client:load)
+         → /api/parse?url=<scotus-pdf-url>
+           → S3 cache check → if miss: download PDF → parse with pdfjs-dist → cache in S3
+         → returns ParsedOpinion JSON
+         → renders chapters with footnote popovers, font size control, chapter nav
+```
 
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+See [CLAUDE.md](CLAUDE.md) for full architecture details, key gotchas, and development notes.
