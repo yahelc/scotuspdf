@@ -806,9 +806,7 @@
         if (detailResp.ok) {
           const detail = await detailResp.json();
           citeModalTitle = detail.name || citeModalTitle;
-          const textContent = (s: string | null) => (s ?? '').replace(/<[^>]*>/g, '').trim();
-          const hasContent = !!(textContent(detail.question) || textContent(detail.facts_of_the_case) || textContent(detail.conclusion));
-          if (hasContent) citeModalInfo = detail;
+          if (detail.name) citeModalInfo = detail;
           // Non-blocking: find slip opinion PDF for OT2019+ cases
           if (detail.term && parseInt(detail.term) >= 2019 && detail.docket_number) {
             fetch(`/api/find-slip?docket=${encodeURIComponent(detail.docket_number)}&term=${encodeURIComponent(detail.term)}`)
