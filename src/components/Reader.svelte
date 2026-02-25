@@ -92,9 +92,7 @@
       const resp = await fetch(`https://api.oyez.org/cases/${year}/${docket}`);
       if (!resp.ok) { oyezAvailable = false; return; }
       const data = await resp.json();
-      const textContent = (s: string | null) => (s ?? '').replace(/<[^>]*>/g, '').trim();
-      const hasContent = !!(textContent(data.question) || textContent(data.facts_of_the_case) || textContent(data.conclusion));
-      if (hasContent) {
+      if (data.name) {
         caseInfo = data;
         oyezAvailable = true;
       } else {
