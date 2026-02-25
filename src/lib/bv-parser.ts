@@ -1,0 +1,514 @@
+import type { ParsedOpinion } from './types';
+
+interface TextItem {
+  str: string;
+  transform: number[];
+  width: number;
+  height: number;
+  fontName: string;
+}
+
+interface PageTextContent {
+  items: (TextItem | { type: string })[];
+}
+
+/**
+ * Find the front matter offset for a bound volume PDF.
+ * Scans pages looking for the first page with a "Cite as:" header containing
+ * an Arabic page number. Returns the offset: (PDF page index) - (printed page number).
+ */
+async function findFrontMatterOffset(doc: any): Promise<number> {
+  const numPages = doc.numPages;
+  // Scan first 100 pages (front matter is usually < 50 pages)
+  const scanLimit = Math.min(numPages, 100);
+
+  for (let i = 1; i <= scanLimit; i++) {
+    const page = await doc.getPage(i);
+    const textContent: PageTextContent = await page.getTextContent();
+    const viewport = page.getViewport({ scale: 1.0 });
+    const pageHeight = viewport.height;
+
+    // Look for "Cite as:" in the header area (top 10% of page)
+    const headerItems: { text: string; y: number; x: number }[] = [];
+    for (const item of textContent.items) {
+      if ('str' in item && item.str.trim()) {
+        const y = item.transform[5];
+        if (y > pageHeight * 0.90) {
+          headerItems.push({ text: item.str.trim(), y, x: item.transform[4] });
+        }
+      }
+    }
+
+    const headerText = headerItems.map(it => it.text).join(' ');
+    const citeMatch = headerText.match(/Cite as:\s*\d+\s+U\.\s*S\.\s+(\d+)/);
+    if (citeMatch) {
+      const printedPage = parseInt(citeMatch[1]);
+      // offset = pdfPageIndex(1-based) - printedPage
+      return i - printedPage;
+    }
+  }
+
+  // Fallback: no offset found, assume 0
+  return 0;
+}
+
+/**
+ * Extract the "Cite as" page number from a given PDF page's header.
+ * Returns the starting page of the case on that page, or null if not found.
+ */
+async function getCiteAsPage(doc: any, pageIndex: number): Promise<number | null> {
+  if (pageIndex < 1 || pageIndex > doc.numPages) return null;
+  const page = await doc.getPage(pageIndex);
+  const textContent: PageTextContent = await page.getTextContent();
+  const viewport = page.getViewport({ scale: 1.0 });
+  const pageHeight = viewport.height;
+
+  const headerItems: { text: string }[] = [];
+  for (const item of textContent.items) {
+    if ('str' in item && item.str.trim()) {
+      const y = item.transform[5];
+      if (y > pageHeight * 0.90) {
+        headerItems.push({ text: item.str.trim() });
+      }
+    }
+  }
+
+  const headerText = headerItems.map(it => it.text).join(' ');
+  // "Cite as: 553 U. S. 285 (2008)" — we want 285
+  const match = headerText.match(/Cite as:\s*\d+\s+U\.\s*S\.\s+(\d+)/);
+  return match ? parseInt(match[1]) : null;
+}
+
+/**
+ * Parse a single case from a bound volume PDF.
+ *
+ * @param pdfData - The full bound volume PDF as ArrayBuffer
+ * @param volume - The volume number (e.g., 553)
+ * @param startPage - The starting printed page number of the case (e.g., 285)
+ * @returns ParsedOpinion for the cited case
+ */
+export async function parseBoundVolumeCase(
+  pdfData: ArrayBuffer,
+  volume: number,
+  startPage: number
+): Promise<ParsedOpinion> {
+  // Pre-load the worker on the main thread (same pattern as parser.ts)
+  if (!(globalThis as any).pdfjsWorker) {
+    const worker = await import('pdfjs-dist/legacy/build/pdf.worker.mjs');
+    (globalThis as any).pdfjsWorker = worker;
+  }
+
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+
+  const doc = await pdfjsLib.getDocument({
+    data: new Uint8Array(pdfData),
+    useSystemFonts: true,
+    isEvalSupported: false,
+  }).promise;
+
+  // Find front matter offset
+  const offset = await findFrontMatterOffset(doc);
+  const firstPdfPage = startPage + offset;
+
+  if (firstPdfPage < 1 || firstPdfPage > doc.numPages) {
+    throw new Error(`Page ${startPage} not found in volume ${volume} (computed PDF page ${firstPdfPage})`);
+  }
+
+  // Find case boundaries: scan forward until Cite as: references a different start page
+  let lastPdfPage = firstPdfPage;
+  for (let i = firstPdfPage + 1; i <= doc.numPages; i++) {
+    const citeAs = await getCiteAsPage(doc, i);
+    if (citeAs !== null && citeAs !== startPage) {
+      // This page belongs to a different case
+      break;
+    }
+    lastPdfPage = i;
+  }
+
+  let caseTitle = `${volume} U.S. ${startPage}`;
+
+  // Extract text from our page range using the same approach as parsePdf
+  const { buildParagraphs, tagBoilerplate, parseSectionHeader, dehyphenate, markCitations } = await import('./parser');
+
+  interface PageResult {
+    sectionHeader: { raw: string; normalized: string; id: string; title: string; author: string | null } | null;
+    bodyLines: string[];
+    footnotes: Map<number, string>;
+    footnoteContinuation: string;
+  }
+
+  const pages: PageResult[] = [];
+
+  for (let i = firstPdfPage; i <= lastPdfPage; i++) {
+    const page = await doc.getPage(i);
+    const textContent: PageTextContent = await page.getTextContent();
+    const viewport = page.getViewport({ scale: 1.0 });
+    const pageHeight = viewport.height;
+
+    const hYMin = pageHeight * 0.80;
+    const hYMax = pageHeight * 0.84;
+
+    const allItems: { y: number; x: number; text: string; fontSize: number }[] = [];
+    for (const item of textContent.items) {
+      if ('str' in item && item.str.trim()) {
+        allItems.push({
+          y: item.transform[5],
+          x: item.transform[4],
+          text: item.str,
+          fontSize: Math.abs(item.transform[0]),
+        });
+      }
+    }
+
+    // Extract section header
+    const headerItems = allItems.filter(it => it.y >= hYMin && it.y <= hYMax);
+    headerItems.sort((a, b) => a.x - b.x);
+    const headerText = headerItems.map(it => it.text.trim()).join(' ');
+    const sectionHeader = parseSectionHeader(headerText);
+
+    // Extract case title from first page header area
+    if (i === firstPdfPage) {
+      // Look for case name in the top header (above the "Cite as:" line)
+      const topItems = allItems
+        .filter(it => it.y > pageHeight * 0.90)
+        .sort((a, b) => a.x - b.x);
+      const topText = topItems.map(it => it.text.trim()).join(' ');
+      // Even pages have case name, odd pages have "Cite as:"
+      // Try to extract from even-page header format: "CASE NAME v. OTHER"
+      const caseMatch = topText.match(/([A-Z][A-Z\s.]+v\.\s+[A-Z][A-Z\s.]+?)(?:\s+\d|$)/);
+      if (caseMatch) {
+        caseTitle = caseMatch[1].trim();
+      }
+    }
+
+    // Body text
+    const bodyItems = allItems.filter(it => {
+      const y = it.y;
+      if (y >= hYMin) return false;
+      if (y < 60) return false;
+      if (y > pageHeight - 60) {
+        const t = it.text.trim();
+        if (/^Cite as:/.test(t)) return false;
+        if (/^\d+$/.test(t)) return false;
+        if (/^\(Slip Opinion\)/.test(t)) return false;
+      }
+      return true;
+    });
+
+    bodyItems.sort((a, b) => {
+      const dy = Math.round(b.y) - Math.round(a.y);
+      return dy !== 0 ? dy : a.x - b.x;
+    });
+
+    // Dominant body font size
+    const itemFSFreq = new Map<number, number>();
+    for (const item of bodyItems) {
+      const fs = Math.round(item.fontSize);
+      itemFSFreq.set(fs, (itemFSFreq.get(fs) || 0) + 1);
+    }
+    let bodyFS = 0;
+    let maxFreq = 0;
+    for (const [fs, freq] of itemFSFreq) {
+      if (freq > maxFreq) { maxFreq = freq; bodyFS = fs; }
+    }
+
+    // Find footnote separator
+    let separatorY = -1;
+    for (const item of bodyItems) {
+      if (/^——+$/.test(item.text.trim()) && bodyFS > 0 && item.fontSize < bodyFS - 1) {
+        separatorY = item.y;
+        break;
+      }
+    }
+
+    // Snap superscript footnote refs
+    for (let idx = 0; idx < bodyItems.length; idx++) {
+      const item = bodyItems[idx];
+      const trimmedText = item.text.trim();
+      const isAboveSep = separatorY < 0 || item.y > separatorY + 2;
+      const isSuperRef = (
+        isAboveSep &&
+        /^\d{1,2}$/.test(trimmedText) &&
+        bodyFS > 0 &&
+        item.fontSize < bodyFS - 2.5
+      );
+      if (!isSuperRef) continue;
+
+      let onBodyLine = false;
+      for (let j = Math.max(0, idx - 10); j < Math.min(bodyItems.length, idx + 10); j++) {
+        if (j === idx) continue;
+        const other = bodyItems[j];
+        if (/^\d{1,2}$/.test(other.text.trim()) && other.fontSize < bodyFS - 2.5) continue;
+        if (Math.abs(Math.round(other.y) - Math.round(item.y)) <= 2) {
+          onBodyLine = true;
+          break;
+        }
+      }
+      if (onBodyLine) continue;
+
+      let nearestY = item.y;
+      let minDist = Infinity;
+      for (let j = Math.max(0, idx - 10); j < Math.min(bodyItems.length, idx + 10); j++) {
+        if (j === idx) continue;
+        const other = bodyItems[j];
+        if (/^\d{1,2}$/.test(other.text.trim()) && other.fontSize < bodyFS - 2.5) continue;
+        const dist = Math.abs(other.y - item.y);
+        if (dist < minDist) {
+          minDist = dist;
+          nearestY = other.y;
+        }
+      }
+      bodyItems[idx] = { ...item, y: nearestY };
+    }
+
+    bodyItems.sort((a, b) => {
+      const dy = Math.round(b.y) - Math.round(a.y);
+      return dy !== 0 ? dy : a.x - b.x;
+    });
+
+    // Build text lines
+    const textLines: { text: string; avgFontSize: number; startX: number }[] = [];
+    let curText = '';
+    let curStartX = 0;
+    let lastY = -1;
+    let lastFontSize = 0;
+    let fsSum = 0;
+    let fsCount = 0;
+
+    for (const item of bodyItems) {
+      const trimmedItem = item.text.trim();
+      const isAboveSeparator = separatorY < 0 || item.y > separatorY + 2;
+      const isSuperscriptRef = (
+        isAboveSeparator &&
+        /^\d{1,2}$/.test(trimmedItem) &&
+        bodyFS > 0 &&
+        item.fontSize < bodyFS - 2.5
+      );
+
+      if (lastY >= 0 && Math.abs(item.y - lastY) > 2) {
+        if (curText.trim()) textLines.push({ text: curText.trim(), avgFontSize: fsCount > 0 ? fsSum / fsCount : 0, startX: curStartX });
+        if (isSuperscriptRef) {
+          curText = `{{fn:${trimmedItem}}}`;
+        } else {
+          curText = item.text;
+        }
+        curStartX = item.x;
+        fsSum = item.fontSize;
+        fsCount = 1;
+      } else {
+        const isSmallCap = (
+          trimmedItem.length > 0 &&
+          /^[A-Z]+$/.test(trimmedItem) &&
+          item.fontSize < lastFontSize - 0.5 &&
+          curText.length > 0 &&
+          /[A-Z]$/.test(curText)
+        );
+
+        if (isSuperscriptRef) {
+          curText += `{{fn:${trimmedItem}}}`;
+        } else if (isSmallCap) {
+          curText += trimmedItem;
+        } else {
+          if (!curText) curStartX = item.x;
+          curText += (curText && !curText.endsWith(' ') ? ' ' : '') + item.text;
+        }
+        fsSum += item.fontSize;
+        fsCount++;
+      }
+      lastY = item.y;
+      lastFontSize = item.fontSize;
+    }
+    if (curText.trim()) textLines.push({ text: curText.trim(), avgFontSize: fsCount > 0 ? fsSum / fsCount : 0, startX: curStartX });
+
+    // Find dominant left margin
+    const bodyFontLines = textLines.filter(
+      l => l.avgFontSize > 0 && bodyFS > 0 && l.avgFontSize >= bodyFS - 1
+    );
+    const xFreq = new Map<number, number>();
+    for (const line of bodyFontLines) {
+      const rx = Math.round(line.startX);
+      xFreq.set(rx, (xFreq.get(rx) || 0) + 1);
+    }
+    let bodyLeftMargin = 0;
+    let maxXFreq = 0;
+    for (const [x, freq] of xFreq) {
+      if (freq > maxXFreq) { maxXFreq = freq; bodyLeftMargin = x; }
+    }
+
+    // Split into body and footnotes
+    const bodyLines: string[] = [];
+    const footnotes = new Map<number, string>();
+
+    let separatorIdx = -1;
+    for (let li = 0; li < textLines.length; li++) {
+      if (/^——+$/.test(textLines[li].text.trim())) {
+        const isSmall = textLines[li].avgFontSize > 0 && bodyFS > 0 && textLines[li].avgFontSize < bodyFS - 1;
+        if (isSmall) {
+          separatorIdx = li;
+          break;
+        }
+      }
+    }
+
+    const bodyEnd = separatorIdx >= 0 ? separatorIdx : textLines.length;
+    for (let li = 0; li < bodyEnd; li++) {
+      const line = textLines[li];
+      const trimmed = line.text.trim();
+
+      const indent = line.startX - bodyLeftMargin;
+      const isBodyFont = Math.abs(line.avgFontSize - bodyFS) < 1.5;
+      const isCentered = bodyLeftMargin > 0 && indent > 50 && isBodyFont;
+
+      if (isCentered && /^(I{1,4}V?|VI{0,3}|IX|X{0,3})$/.test(trimmed)) {
+        bodyLines.push('');
+        bodyLines.push(`{{h1:${trimmed}}}`);
+        bodyLines.push('');
+        continue;
+      }
+      if (isCentered && /^[A-Z]$/.test(trimmed)) {
+        bodyLines.push('');
+        bodyLines.push(`{{h2:${trimmed}}}`);
+        bodyLines.push('');
+        continue;
+      }
+      if (isCentered && /^\d{1,2}$/.test(trimmed)) {
+        bodyLines.push('');
+        bodyLines.push(`{{h3:${trimmed}}}`);
+        bodyLines.push('');
+        continue;
+      }
+
+      const isParagraphIndent = bodyLeftMargin > 0 && indent > 5 && indent < 50 && isBodyFont;
+      if (isParagraphIndent && bodyLines.length > 0) {
+        bodyLines.push('');
+      }
+
+      bodyLines.push(line.text);
+    }
+
+    let footnoteContinuation = '';
+    if (separatorIdx >= 0) {
+      let fnId = 0;
+      let fnText = '';
+
+      for (let li = separatorIdx + 1; li < textLines.length; li++) {
+        const line = textLines[li];
+        const trimmed = line.text.trim();
+
+        if (/^\d{1,2}$/.test(trimmed) && line.avgFontSize < bodyFS - 3) {
+          if (fnId > 0) footnotes.set(fnId, fnText.trim());
+          fnId = parseInt(trimmed);
+          fnText = '';
+          continue;
+        }
+
+        if (/^——+$/.test(trimmed)) continue;
+
+        if (fnId > 0) {
+          fnText += ' ' + trimmed;
+        } else {
+          footnoteContinuation += ' ' + trimmed;
+        }
+      }
+      if (fnId > 0) footnotes.set(fnId, fnText.trim());
+      footnoteContinuation = footnoteContinuation.trim();
+    }
+
+    pages.push({ sectionHeader, bodyLines, footnotes, footnoteContinuation });
+  }
+
+  // Group pages into chapters (same logic as parsePdf)
+  interface ChapterData {
+    header: { raw: string; normalized: string; id: string; title: string; author: string | null };
+    text: string;
+    footnotes: Map<number, string>;
+  }
+
+  const chapterDatas: ChapterData[] = [];
+  let currentHeader: ChapterData['header'] | null = null;
+  let currentLines: string[] = [];
+  let currentFootnotes = new Map<number, string>();
+
+  for (const page of pages) {
+    const header = page.sectionHeader;
+
+    if (header && (!currentHeader || header.id !== currentHeader.id)) {
+      if (currentHeader) {
+        chapterDatas.push({ header: currentHeader, text: currentLines.join('\n'), footnotes: currentFootnotes });
+      } else if (currentLines.length > 0) {
+        chapterDatas.push({
+          header: { raw: 'Opinion', normalized: 'Opinion', id: 'opinion', title: 'Opinion', author: null },
+          text: currentLines.join('\n'),
+          footnotes: currentFootnotes,
+        });
+      }
+      currentHeader = header;
+      currentLines = [];
+      currentFootnotes = new Map();
+    }
+
+    currentLines.push(...page.bodyLines);
+
+    if (page.footnoteContinuation) {
+      let maxId = 0;
+      for (const id of currentFootnotes.keys()) {
+        if (id > maxId) maxId = id;
+      }
+      if (maxId > 0) {
+        const existing = currentFootnotes.get(maxId) || '';
+        currentFootnotes.set(maxId, (existing + ' ' + page.footnoteContinuation).trim());
+      }
+    }
+
+    for (const [id, text] of page.footnotes) {
+      const existing = currentFootnotes.get(id);
+      if (existing) {
+        currentFootnotes.set(id, existing + ' ' + text);
+      } else {
+        currentFootnotes.set(id, text);
+      }
+    }
+  }
+
+  if (currentHeader && currentLines.length > 0) {
+    chapterDatas.push({ header: currentHeader, text: currentLines.join('\n'), footnotes: currentFootnotes });
+  }
+
+  // Build final chapters
+  const finalChapters = chapterDatas.map(cd => {
+    const footnotes: { id: number; text: string }[] = [];
+    for (const [id, text] of cd.footnotes) {
+      footnotes.push({ id, text: markCitations(dehyphenate(text)) });
+    }
+    footnotes.sort((a, b) => a.id - b.id);
+
+    return {
+      id: cd.header.id,
+      title: cd.header.title,
+      author: cd.header.author,
+      paragraphs: tagBoilerplate(buildParagraphs(cd.text)),
+      footnotes,
+    };
+  });
+
+  if (finalChapters.length === 0) {
+    const allText = pages.map(p => p.bodyLines.join('\n')).join('\n\n');
+    finalChapters.push({
+      id: 'opinion',
+      title: 'Opinion',
+      author: null,
+      paragraphs: buildParagraphs(allText),
+      footnotes: [],
+    });
+  }
+
+  const sourceUrl = `https://www.supremecourt.gov/opinions/boundvolumes/${volume}bv.pdf`;
+
+  return {
+    caseTitle,
+    docketNumber: '',
+    decidedDate: '',
+    sourceUrl,
+    chapters: finalChapters,
+  };
+}

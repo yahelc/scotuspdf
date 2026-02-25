@@ -202,6 +202,47 @@ export function dehyphenate(text: string): string {
   return result;
 }
 
+/**
+ * Detect US Reports citations and ante/post cross-references in text,
+ * wrapping them with inline markers for the frontend to render as links.
+ *
+ * With case name: `Trump v. United States, 603 U. S. 593`
+ *   → `{{cite:603:593:593:Trump v. United States:Trump v. United States, 603 U. S. 593}}`
+ * Bare citation:  `553 U. S. 285, 294`
+ *   → `{{cite:553:285:294::553 U. S. 285, 294}}`
+ * Ante/post:      `ante, at 14` → `{{ref:ante:14}}`
+ *
+ * Only links volumes ≥ 502 (roughly when supremecourt.gov coverage starts).
+ * Marker format: cite:volume:page:pinpoint:caseName:display  (caseName may be empty)
+ */
+export function markCitations(text: string): string {
+  // Single pass: optionally match a "Party v. Party, " prefix before the citation.
+  // Using one pass prevents Step 2 from re-processing the display text inside markers
+  // already written by Step 1 (which would produce nested/broken markers).
+  // Group 1 = firstParty, Group 2 = secondParty (both undefined for bare citations)
+  // Group 3 = volume, Group 4 = page, Group 5 = optional pinpoint
+  let result = text.replace(
+    /(?:([A-Z]\w+(?:\s+(?:of\s+|the\s+|de\s+)?[A-Z]\w+){0,4})\s+v\.\s+([A-Z]\w+(?:\s+(?:of\s+|the\s+)?[A-Z]?\w+){0,3}),\s*)?(\d{1,3})\s+U\.\s*S\.\s+(\d{1,4})(?:\s*,\s*(?:at\s+)?(\d{1,4}))?/g,
+    (match, firstParty, secondParty, volume, page, pinpoint) => {
+      const vol = parseInt(volume);
+      if (vol < 502) return match;
+      const pin = pinpoint || page;
+      const caseName = firstParty && secondParty
+        ? `${firstParty.trim()} v. ${secondParty.trim()}`
+        : '';
+      return `{{cite:${volume}:${page}:${pin}:${caseName}:${match}}}`;
+    }
+  );
+
+  // Ante/post cross-references: "ante, at 14" / "post, at 48"
+  result = result.replace(
+    /\b(ante|post)\s*,\s*at\s+(\d{1,4})/gi,
+    (match, direction, page) => `{{ref:${direction.toLowerCase()}:${page}}}`
+  );
+
+  return result;
+}
+
 export function buildParagraphs(text: string): Paragraph[] {
   const paragraphs: Paragraph[] = [];
   const rawParagraphs = text.split(/\n{2,}/);
@@ -233,6 +274,9 @@ export function buildParagraphs(text: string): Paragraph[] {
     // where e.g. an italic word and its following Roman comma are separate pdfjs items.
     // In standard typography these characters are never preceded by a space.
     trimmed = trimmed.replace(/ ([.,;:!?)\]»\u201d\u2019])/g, '$1');
+
+    // Mark US Reports citations and ante/post cross-references
+    trimmed = markCitations(trimmed);
 
     // Merge with previous paragraph if this is a continuation:
     // previous paragraph doesn't end with sentence-ending punctuation,
@@ -904,7 +948,7 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
     // Convert footnote map to sorted array
     const footnotes: { id: number; text: string }[] = [];
     for (const [id, text] of cd.footnotes) {
-      footnotes.push({ id, text: dehyphenate(text) });
+      footnotes.push({ id, text: markCitations(dehyphenate(text)) });
     }
     footnotes.sort((a, b) => a.id - b.id);
 

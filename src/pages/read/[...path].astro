@@ -7,9 +7,16 @@ export const prerender = false;
 const path = Astro.params.path || '';
 const parts = path.split('/');
 
-// Reconstruct the SCOTUS PDF URL from term/filename
 let pdfUrl = '';
-if (parts.length >= 2) {
+let apiUrl = '';
+
+if (parts[0] === 'bv' && parts.length >= 3) {
+  // Bound volume: /read/bv/553/285
+  const volume = parts[1];
+  const page = parts[2];
+  apiUrl = `/api/parse-bv?volume=${volume}&page=${page}`;
+} else if (parts.length >= 2) {
+  // Slip opinion: /read/25/24-1287_4gcj.pdf
   const term = parts[0];
   const filename = parts.slice(1).join('/');
   pdfUrl = `https://www.supremecourt.gov/opinions/${term}pdf/${filename}`;
@@ -23,7 +30,7 @@ if (urlParam) {
 ---
 
 <Layout title="Reading..." class="reader-page">
-  <Reader client:load pdfUrl={pdfUrl} />
+  <Reader client:load pdfUrl={pdfUrl} apiUrl={apiUrl} />
 </Layout>
 
 <style>

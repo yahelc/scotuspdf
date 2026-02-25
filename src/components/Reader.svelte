@@ -5,9 +5,10 @@
 
   interface Props {
     pdfUrl: string;
+    apiUrl?: string;
   }
 
-  let { pdfUrl }: Props = $props();
+  let { pdfUrl, apiUrl = '' }: Props = $props();
 
   let opinion: ParsedOpinion | null = $state(null);
   let error: string | null = $state(null);
@@ -163,11 +164,12 @@
   let flashNext = $state(false);
 
   // Derived case ID for position storage
-  let caseId = $derived(pdfUrl.replace(/[^a-zA-Z0-9]/g, '_'));
+  let caseId = $derived((apiUrl || pdfUrl).replace(/[^a-zA-Z0-9]/g, '_'));
 
   // Load the opinion
   $effect(() => {
-    if (!pdfUrl) {
+    const fetchUrl = apiUrl || (pdfUrl ? `/api/parse?url=${encodeURIComponent(pdfUrl)}&v=3` : '');
+    if (!fetchUrl) {
       error = 'No PDF URL provided';
       loading = false;
       return;
@@ -176,7 +178,7 @@
     loading = true;
     error = null;
 
-    fetch(`/api/parse?url=${encodeURIComponent(pdfUrl)}&v=3`)
+    fetch(fetchUrl)
       .then((r) => {
         if (!r.ok) return r.json().then((e: any) => Promise.reject(e.error || 'Parse failed'));
         return r.json();
@@ -652,10 +654,12 @@
   function chapterReadingTime(chapter: { paragraphs: { text: string }[] }): string {
     let words = 0;
     for (const para of chapter.paragraphs) {
-      // Strip markers: {{h1:...}}, {{bp:...}}, {{bpj:...}}, {{fn:N}}
+      // Strip markers: {{h1:...}}, {{bp:...}}, {{bpj:...}}, {{fn:N}}, {{cite:...}}, {{ref:...}}
       const cleaned = para.text
         .replace(/\{\{(?:h[123]|bp|bpj):([^}]*)\}\}/g, '$1')
-        .replace(/\{\{fn:\d+\}\}/g, '');
+        .replace(/\{\{fn:\d+\}\}/g, '')
+        .replace(/\{\{cite:\d+:\d+:\d+:[^:]*:(.+?)\}\}/g, '$1')
+        .replace(/\{\{ref:(?:ante|post):\d+\}\}/g, '');
       words += cleaned.trim().split(/\s+/).filter(Boolean).length;
     }
     const mins = Math.ceil(words / 265);
@@ -673,23 +677,133 @@
     return text.split(/\s*_{5,}\s*/).filter(Boolean);
   }
 
-  /** Split paragraph text into segments of plain text and footnote references */
-  function parseSegments(text: string): { type: 'text' | 'fn'; value: string }[] {
-    const segments: { type: 'text' | 'fn'; value: string }[] = [];
-    const regex = /\{\{fn:(\d+)\}\}/g;
+  type Segment =
+    | { type: 'text' | 'fn'; value: string }
+    | { type: 'cite'; volume: string; page: string; pinpoint: string; caseName: string; display: string }
+    | { type: 'ref'; direction: string; page: string };
+
+  /** Split paragraph text into segments of plain text, footnote refs, citations, and cross-refs */
+  function parseSegments(text: string): Segment[] {
+    const segments: Segment[] = [];
+    // cite marker: {{cite:volume:page:pinpoint:caseName:display}} — caseName may be empty
+    const regex = /\{\{fn:(\d+)\}\}|\{\{cite:(\d+):(\d+):(\d+):([^:]*):(.+?)\}\}|\{\{ref:(ante|post):(\d+)\}\}/g;
     let lastIndex = 0;
     let match;
     while ((match = regex.exec(text)) !== null) {
       if (match.index > lastIndex) {
         segments.push({ type: 'text', value: text.slice(lastIndex, match.index) });
       }
-      segments.push({ type: 'fn', value: match[1] });
+      if (match[1] !== undefined) {
+        segments.push({ type: 'fn', value: match[1] });
+      } else if (match[2] !== undefined) {
+        segments.push({ type: 'cite', volume: match[2], page: match[3], pinpoint: match[4], caseName: match[5], display: match[6] });
+      } else if (match[7] !== undefined) {
+        segments.push({ type: 'ref', direction: match[7], page: match[8] });
+      }
       lastIndex = regex.lastIndex;
     }
     if (lastIndex < text.length) {
       segments.push({ type: 'text', value: text.slice(lastIndex) });
     }
     return segments;
+  }
+
+  // Citation modal state
+  let showCiteModal = $state(false);
+  let citeModalVolume = $state('');
+  let citeModalPage = $state('');
+  let citeModalTitle = $state('');
+  let citeModalInfo = $state<OyezCase | null>(null);
+  let citeModalLoading = $state(false);
+  let citeFactsExpanded = $state(false);
+  let citeConclusionExpanded = $state(false);
+
+  async function openCiteModal(volume: string, page: string, caseName: string = '') {
+    citeModalVolume = volume;
+    citeModalPage = page;
+    citeModalTitle = caseName || `${volume} U.S. ${page}`;
+    citeModalInfo = null;
+    citeModalLoading = true;
+    citeFactsExpanded = false;
+    citeConclusionExpanded = false;
+    showCiteModal = true;
+    try {
+      const vol = parseInt(volume);
+      const pg = parseInt(page);
+      // Estimate OT year from volume number (empirically calibrated: vol 502 ≈ OT1991, vol 553 ≈ OT2007)
+      const estimatedYear = Math.floor(1990 + (vol - 502) / 3);
+      const currentYear = new Date().getFullYear();
+      const years = [
+        estimatedYear - 2, estimatedYear - 1, estimatedYear,
+        estimatedYear + 1, estimatedYear + 2,
+      ].filter(y => y >= 1991 && y <= currentYear);
+
+      // Fetch all candidate terms in parallel. Use per_page=150 to cover 1990s terms
+      // where the Court decided ~100-120 cases/term (which would exceed per_page=100).
+      const termResults = await Promise.all(
+        years.map(y =>
+          fetch(`https://api.oyez.org/cases?filter=term:${y}&per_page=150&page=0`)
+            .then(r => r.ok ? r.json() : [])
+            .catch(() => [])
+        )
+      );
+
+      // Primary match: exact citation volume + page
+      let foundHref: string | null = null;
+      outer: for (const cases of termResults) {
+        if (!Array.isArray(cases)) continue;
+        for (const c of cases) {
+          if (parseInt(c.citation?.volume) === vol && parseInt(c.citation?.page) === pg) {
+            foundHref = c.href;
+            break outer;
+          }
+        }
+      }
+
+      // Fallback: match by case name (for cases where Oyez citation data is missing,
+      // e.g. very recent cases). Strip common citation signals ("See", "In", etc.)
+      // that may have been captured as part of the party name.
+      if (!foundHref && caseName) {
+        const cleanPart = (p: string) =>
+          p.replace(/^(See also|See|Cf\.|Cf|In|Under|After|Before|Compare)\s+/i, '').trim().toLowerCase();
+        const [rawP1 = '', rawP2 = ''] = caseName.split(/\s+v\.\s+/);
+        const p1 = cleanPart(rawP1);
+        const p2 = cleanPart(rawP2);
+        outerName: for (const cases of termResults) {
+          if (!Array.isArray(cases)) continue;
+          for (const c of cases) {
+            const oyezName = (c.name || '').toLowerCase();
+            if (p1 && p2 && oyezName.includes(p1) && oyezName.includes(p2)) {
+              foundHref = c.href;
+              break outerName;
+            }
+          }
+        }
+      }
+
+      if (foundHref) {
+        const detailResp = await fetch(foundHref);
+        if (detailResp.ok) {
+          const detail = await detailResp.json();
+          citeModalTitle = detail.name || citeModalTitle;
+          const textContent = (s: string | null) => (s ?? '').replace(/<[^>]*>/g, '').trim();
+          const hasContent = !!(textContent(detail.question) || textContent(detail.facts_of_the_case) || textContent(detail.conclusion));
+          if (hasContent) citeModalInfo = detail;
+        }
+      }
+    } catch {}
+    citeModalLoading = false;
+  }
+
+  function handleRefClick(direction: string, _page: string) {
+    if (!opinion) return;
+    const currentIdx = opinion.chapters.findIndex(c => c.id === currentChapterId);
+    if (currentIdx < 0) return;
+    if (direction === 'ante' && currentIdx > 0) {
+      jumpToChapter(opinion.chapters[currentIdx - 1].id);
+    } else if (direction === 'post' && currentIdx < opinion.chapters.length - 1) {
+      jumpToChapter(opinion.chapters[currentIdx + 1].id);
+    }
   }
 
   function showFootnote(fnId: number, chapterFootnotes: Footnote[], event: MouseEvent) {
@@ -966,6 +1080,97 @@
     </div>
   {/if}
 
+  <!-- Citation modal -->
+  {#if showCiteModal}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-backdrop" onclick={() => showCiteModal = false}></div>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <span class="modal-title">{citeModalTitle}</span>
+        <button class="modal-close" onclick={() => showCiteModal = false}>&times;</button>
+      </div>
+      <div class="modal-body">
+        {#if citeModalLoading}
+          <div class="cite-modal-loading"><div class="spinner"></div></div>
+        {:else}
+          {#if citeModalInfo}
+            {@const dec = citeModalInfo.decisions?.[0]}
+
+            {#if dec?.description}
+              <p class="modal-description">{dec.description}</p>
+            {/if}
+
+            {#if dec?.votes?.length}
+              {@const majorityVotes = dec.votes.filter(v => v.vote === 'majority')}
+              {@const minorityVotes = dec.votes.filter(v => v.vote === 'minority')}
+              <div class="modal-section">
+                <h3 class="modal-section-title">Vote</h3>
+                <div class="vote-summary">
+                  {dec.majority_vote}–{dec.minority_vote}
+                  {#if dec.winning_party}
+                    <span class="vote-winner">for {dec.winning_party}</span>
+                  {/if}
+                </div>
+                <div class="vote-grid">
+                  <div class="vote-col">
+                    <div class="vote-col-label">Majority</div>
+                    {#each majorityVotes as v}
+                      <div class="vote-justice">{v.member.last_name}</div>
+                    {/each}
+                  </div>
+                  <div class="vote-col">
+                    <div class="vote-col-label">Minority</div>
+                    {#each minorityVotes as v}
+                      <div class="vote-justice">{v.member.last_name}</div>
+                    {/each}
+                  </div>
+                </div>
+              </div>
+            {/if}
+
+            {#if citeModalInfo.question}
+              <div class="modal-section">
+                <h3 class="modal-section-title">Question Presented</h3>
+                <div class="modal-html">{@html cleanHtml(citeModalInfo.question)}</div>
+              </div>
+            {/if}
+
+            {#if citeModalInfo.facts_of_the_case}
+              <div class="modal-section">
+                <button class="modal-section-toggle" onclick={() => citeFactsExpanded = !citeFactsExpanded}>
+                  <h3 class="modal-section-title">Facts of the Case</h3>
+                  <span class="modal-chevron">{citeFactsExpanded ? '▲' : '▼'}</span>
+                </button>
+                <div class="modal-collapsible" class:expanded={citeFactsExpanded}>
+                  <div class="modal-html">{@html cleanHtml(citeModalInfo.facts_of_the_case)}</div>
+                </div>
+              </div>
+            {/if}
+
+            {#if citeModalInfo.conclusion}
+              <div class="modal-section">
+                <button class="modal-section-toggle" onclick={() => citeConclusionExpanded = !citeConclusionExpanded}>
+                  <h3 class="modal-section-title">Conclusion</h3>
+                  <span class="modal-chevron">{citeConclusionExpanded ? '▲' : '▼'}</span>
+                </button>
+                <div class="modal-collapsible" class:expanded={citeConclusionExpanded}>
+                  <div class="modal-html">{@html cleanHtml(citeModalInfo.conclusion)}</div>
+                </div>
+              </div>
+            {/if}
+          {/if}
+        {/if}
+
+        <div class="modal-section cite-modal-render-section">
+          <a class="cite-modal-render-link" href="/read/bv/{citeModalVolume}/{citeModalPage}" target="_blank" rel="noopener">
+            Try to render this decision →
+          </a>
+          <p class="cite-modal-render-note">Experimental: reads from the SCOTUS bound volume PDF</p>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <!-- Disclaimer overlay (one-time) -->
   {#if showDisclaimer}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1030,6 +1235,10 @@
                     id="{chapter.id}-ref-{seg.value}"
                     onclick={(e) => showFootnote(parseInt(seg.value), chapter.footnotes, e)}
                   >{seg.value}</button>
+                {:else if seg.type === 'cite'}
+                  <button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>
+                {:else if seg.type === 'ref'}
+                  <button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>
                 {:else}
                   {seg.value}
                 {/if}
@@ -1043,7 +1252,7 @@
             {#each chapter.footnotes as fn}
               <div class="chapter-footnote" id="{chapter.id}-fn-{fn.id}">
                 <button class="fn-back" onclick={() => scrollToRef(chapter.id, fn.id)}>{fn.id}</button>
-                <span class="fn-text">{fn.text}</span>
+                <span class="fn-text">{#each parseSegments(fn.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else}{seg.value}{/if}{/each}</span>
               </div>
             {/each}
           </div>
@@ -1063,7 +1272,7 @@
         <span class="footnote-num">{activeFootnote.id}</span>
         <button class="footnote-close" onclick={dismissFootnote}>&times;</button>
       </div>
-      <p>{activeFootnote.text}</p>
+      <p>{#each parseSegments(activeFootnote.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else}{seg.value}{/if}{/each}</p>
     </div>
   {/if}
   </div>
@@ -2025,6 +2234,75 @@
     font-size: 0.9rem;
     color: var(--text);
     padding: 0.15rem 0;
+  }
+
+  .cite-link {
+    display: inline;
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+    font-size: inherit;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
+  }
+
+  .cite-link:hover {
+    text-decoration-style: solid;
+  }
+
+  .ref-link {
+    display: inline;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+    font-size: inherit;
+    font-style: italic;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
+  }
+
+  .ref-link:hover {
+    color: var(--text);
+    text-decoration-style: solid;
+  }
+
+  .cite-modal-loading {
+    display: flex;
+    justify-content: center;
+    padding: 2rem;
+  }
+
+  .cite-modal-render-section {
+    margin-top: 0.5rem;
+  }
+
+  .cite-modal-render-link {
+    display: inline-block;
+    color: var(--accent);
+    font-family: var(--font-ui);
+    font-size: 0.9rem;
+    text-decoration: none;
+    font-weight: 600;
+  }
+
+  .cite-modal-render-link:hover {
+    text-decoration: underline;
+  }
+
+  .cite-modal-render-note {
+    font-family: var(--font-ui);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin: 0.25rem 0 0;
+    font-style: italic;
   }
 
   .modal-oyez-credit {
