@@ -887,6 +887,7 @@
     </div>
     <div class="toolbar-controls">
       {#if oyezAvailable === true}
+        <a class="toolbar-btn toolbar-oyez-link" href="https://www.oyez.org/cases/{termFromUrl(pdfUrl)}/{opinion.docketNumber}" target="_blank" rel="noopener" aria-label="View on Oyez">Oyez ↗</a>
         <button class="toolbar-btn" onclick={openCaseInfo} aria-label="Case info">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10"/>
@@ -1877,6 +1878,11 @@
   .toolbar-btn:hover {
     color: var(--text);
     background: var(--bg);
+  }
+
+  .toolbar-oyez-link {
+    text-decoration: none;
+    font-size: 0.8rem;
   }
 
   .dropdown-link {
