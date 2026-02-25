@@ -63,6 +63,8 @@
     question: string;
     facts_of_the_case: string;
     conclusion: string;
+    term: string;
+    docket_number: string;
     decisions: Array<{
       description: string;
       majority_vote: number;
@@ -714,6 +716,7 @@
   let citeModalPage = $state('');
   let citeModalTitle = $state('');
   let citeModalInfo = $state<OyezCase | null>(null);
+  let citeModalSlipUrl = $state<string | null>(null);
   let citeModalLoading = $state(false);
   let citeFactsExpanded = $state(false);
   let citeConclusionExpanded = $state(false);
@@ -723,6 +726,7 @@
     citeModalPage = page;
     citeModalTitle = caseName || `${volume} U.S. ${page}`;
     citeModalInfo = null;
+    citeModalSlipUrl = null;
     citeModalLoading = true;
     citeFactsExpanded = false;
     citeConclusionExpanded = false;
@@ -789,6 +793,13 @@
           const textContent = (s: string | null) => (s ?? '').replace(/<[^>]*>/g, '').trim();
           const hasContent = !!(textContent(detail.question) || textContent(detail.facts_of_the_case) || textContent(detail.conclusion));
           if (hasContent) citeModalInfo = detail;
+          // Non-blocking: find slip opinion PDF for OT2019+ cases
+          if (detail.term && parseInt(detail.term) >= 2019 && detail.docket_number) {
+            fetch(`/api/find-slip?docket=${encodeURIComponent(detail.docket_number)}&term=${encodeURIComponent(detail.term)}`)
+              .then(r => r.json())
+              .then(data => { if (data.term && data.filename) citeModalSlipUrl = `/read/${data.term}/${data.filename}`; })
+              .catch(() => {});
+          }
         }
       }
     } catch {}
@@ -1163,7 +1174,12 @@
         {/if}
 
         <div class="modal-section cite-modal-render-section">
-          {#if parseInt(citeModalVolume) <= 591}
+          {#if citeModalSlipUrl}
+            <a class="cite-modal-render-link" href={citeModalSlipUrl} target="_blank" rel="noopener">
+              Try to render this decision →
+            </a>
+            <p class="cite-modal-render-note">Experimental: reads from the SCOTUS slip opinion PDF</p>
+          {:else if parseInt(citeModalVolume) <= 591}
             <a class="cite-modal-render-link" href="/read/bv/{citeModalVolume}/{citeModalPage}" target="_blank" rel="noopener">
               Try to render this decision →
             </a>
