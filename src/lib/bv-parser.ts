@@ -52,7 +52,7 @@ async function findFrontMatterOffset(doc: any): Promise<number> {
     // number at the left or right margin of the upper band row (y > 83%).
     const upperItems = headerItems.filter(it => it.y > pageHeight * 0.83);
     const pageNumItem = upperItems.find(
-      it => /^\d{3,}$/.test(it.text) && (it.x < 200 || it.x > 400)
+      it => /^\d+$/.test(it.text) && (it.x < 200 || it.x > 400)
     );
     if (pageNumItem) {
       // Bound volume: offset = pdfIndex - printed page number
@@ -149,12 +149,13 @@ export async function parseBoundVolumeCase(
 
     // Found the "Cite as: X U.S. startPage" page. The standalone page number
     // at left (x < 200) or right (x > 400) margin gives the current printed page.
-    const pageNumItem = upperItems.find(it => /^\d{3,}$/.test(it.text) && (it.x < 200 || it.x > 400));
+    const pageNumItem = upperItems.find(it => /^\d+$/.test(it.text) && (it.x < 200 || it.x > 400));
     if (pageNumItem) {
       firstPdfPage = startPage + (si - parseInt(pageNumItem.text));
     } else {
-      // Fallback: "Cite as:" appears on the 2nd page of the case
-      firstPdfPage = si - 1;
+      // Fallback: for even startPage "Cite as:" is on page 2 (si-1);
+      // for odd startPage it's on page 3 (si-2, since odd pages carry "Cite as:").
+      firstPdfPage = si - (startPage % 2 === 0 ? 1 : 2);
     }
     break;
   }
