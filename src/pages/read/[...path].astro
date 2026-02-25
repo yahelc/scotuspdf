@@ -1,6 +1,7 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import Reader from '../../components/Reader.svelte';
+import citeIndex from '../../data/cite-index.json';
 
 export const prerender = false;
 
@@ -30,7 +31,7 @@ if (urlParam) {
 ---
 
 <Layout title="Reading..." class="reader-page">
-  <Reader client:load pdfUrl={pdfUrl} apiUrl={apiUrl} />
+  <Reader client:load pdfUrl={pdfUrl} apiUrl={apiUrl} {citeIndex} />
 </Layout>
 
 <style>

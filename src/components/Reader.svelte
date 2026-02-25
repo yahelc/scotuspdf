@@ -3,12 +3,19 @@
   import { loadPreferences, savePreferences, loadPosition, savePosition } from '../lib/preferences';
   import type { Preferences } from '../lib/preferences';
 
+  interface CiteIndexEntry {
+    term: string;
+    filename: string;
+    docket: string;
+  }
+
   interface Props {
     pdfUrl: string;
     apiUrl?: string;
+    citeIndex?: Record<string, CiteIndexEntry>;
   }
 
-  let { pdfUrl, apiUrl = '' }: Props = $props();
+  let { pdfUrl, apiUrl = '', citeIndex = {} }: Props = $props();
 
   let opinion: ParsedOpinion | null = $state(null);
   let error: string | null = $state(null);
@@ -751,8 +758,15 @@
     }
 
     citeModalInfo = null;
-    citeModalSlipUrl = null;
     citeModalLoading = true;
+
+    // Check pre-built citation index for instant slip URL resolution.
+    // This covers OT2019–OT2024; current-term cases fall back to find-slip.
+    const indexEntry = citeIndex[cacheKey];
+    citeModalSlipUrl = indexEntry
+      ? `/read/${indexEntry.term}/${indexEntry.filename}`
+      : null;
+
     try {
       const vol = parseInt(volume);
       const pg = parseInt(page);
@@ -820,8 +834,9 @@
           const detail = await detailResp.json();
           citeModalTitle = detail.name || citeModalTitle;
           if (detail.name) citeModalInfo = detail;
-          // Non-blocking: find slip opinion PDF for OT2019+ cases
-          if (detail.term && parseInt(detail.term) >= 2019 && detail.docket_number) {
+          // Non-blocking: find slip opinion PDF for recent cases not in the static index.
+          // The index covers OT2019–OT2024; find-slip handles the current term.
+          if (!citeModalSlipUrl && detail.term && parseInt(detail.term) >= 2019 && detail.docket_number) {
             fetch(`/api/find-slip?docket=${encodeURIComponent(detail.docket_number)}&term=${encodeURIComponent(detail.term)}`)
               .then(r => r.json())
               .then(data => {
