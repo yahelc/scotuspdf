@@ -770,7 +770,10 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
 
       // Detect paragraph breaks via indentation.
       const isParagraphIndent = bodyLeftMargin > 0 && indent > 5 && indent < 50 && isBodyFont;
-      if (isParagraphIndent && bodyLines.length > 0) {
+      // "Held:" in the Syllabus starts at the flush-left margin (no indent), so it
+      // won't trigger isParagraphIndent — detect it explicitly as a paragraph starter.
+      const isHeldMarker = /^(?:Held|HELD)\s*:/.test(trimmed);
+      if ((isParagraphIndent || isHeldMarker) && bodyLines.length > 0) {
         bodyLines.push(''); // blank line = paragraph break
       }
 
