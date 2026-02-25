@@ -60,6 +60,7 @@
 
   // Case info modal
   interface OyezCase {
+    href: string;
     question: string;
     facts_of_the_case: string;
     conclusion: string;
@@ -1099,6 +1100,9 @@
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-header">
         <span class="modal-title">{citeModalTitle}</span>
+        {#if citeModalInfo?.href}
+          <a class="modal-oyez-btn" href={citeModalInfo.href.replace('api.oyez.org', 'www.oyez.org')} target="_blank" rel="noopener">Oyez ↗</a>
+        {/if}
         <button class="modal-close" onclick={() => showCiteModal = false}>&times;</button>
       </div>
       <div class="modal-body">
@@ -2105,6 +2109,21 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .modal-oyez-btn {
+    flex-shrink: 0;
+    font-family: var(--font-ui);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-decoration: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.15rem 0.4rem;
+  }
+
+  .modal-oyez-btn:hover {
+    color: var(--text);
   }
 
   .modal-close {
