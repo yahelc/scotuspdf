@@ -28,12 +28,14 @@ async function findFrontMatterOffset(doc: any): Promise<number> {
     const viewport = page.getViewport({ scale: 1.0 });
     const pageHeight = viewport.height;
 
-    // Look for "Cite as:" in the header area (top 10% of page)
+    // Collect items from both the slip-opinion top area (y > 90%) and the bound
+    // volume header band (y ≈ 80–84%). Bound volumes put "Cite as:" in the band,
+    // not at the very top of the page.
     const headerItems: { text: string; y: number; x: number }[] = [];
     for (const item of textContent.items) {
       if ('str' in item && item.str.trim()) {
         const y = item.transform[5];
-        if (y > pageHeight * 0.90) {
+        if (y >= pageHeight * 0.80) {
           headerItems.push({ text: item.str.trim(), y, x: item.transform[4] });
         }
       }
@@ -41,11 +43,24 @@ async function findFrontMatterOffset(doc: any): Promise<number> {
 
     const headerText = headerItems.map(it => it.text).join(' ');
     const citeMatch = headerText.match(/Cite as:\s*\d+\s+U\.\s*S\.\s+(\d+)/);
-    if (citeMatch) {
-      const printedPage = parseInt(citeMatch[1]);
-      // offset = pdfPageIndex(1-based) - printedPage
-      return i - printedPage;
+    if (!citeMatch) continue;
+
+    // For slip opinions the "Cite as: X U.S. Y" line is the CURRENT page's number,
+    // so offset = pdfIndex - Y.
+    // For bound volumes "Cite as: X U.S. Y" is the CASE START page, not the current
+    // printed page. The actual printed page number appears as a standalone 3+-digit
+    // number at the left or right margin of the upper band row (y > 83%).
+    const upperItems = headerItems.filter(it => it.y > pageHeight * 0.83);
+    const pageNumItem = upperItems.find(
+      it => /^\d{3,}$/.test(it.text) && (it.x < 200 || it.x > 400)
+    );
+    if (pageNumItem) {
+      // Bound volume: offset = pdfIndex - printed page number
+      return i - parseInt(pageNumItem.text);
     }
+
+    // Slip opinion: offset = pdfIndex - case start page
+    return i - parseInt(citeMatch[1]);
   }
 
   // Fallback: no offset found, assume 0
@@ -67,7 +82,8 @@ async function getCiteAsPage(doc: any, pageIndex: number): Promise<number | null
   for (const item of textContent.items) {
     if ('str' in item && item.str.trim()) {
       const y = item.transform[5];
-      if (y > pageHeight * 0.90) {
+      // Check both slip-opinion top area (> 90%) and bound-volume band (80–84%)
+      if (y >= pageHeight * 0.80) {
         headerItems.push({ text: item.str.trim() });
       }
     }
@@ -106,22 +122,64 @@ export async function parseBoundVolumeCase(
     isEvalSupported: false,
   }).promise;
 
-  // Find front matter offset
-  const offset = await findFrontMatterOffset(doc);
-  const firstPdfPage = startPage + offset;
+  // Compute rough offset from early pages, then refine by searching near the target.
+  // The offset isn't constant: blank separator pages accumulate between cases, so the
+  // early-pages estimate may be off by a few pages relative to the target location.
+  const roughOffset = await findFrontMatterOffset(doc);
+  const roughEstimate = startPage + roughOffset;
 
-  if (firstPdfPage < 1 || firstPdfPage > doc.numPages) {
-    throw new Error(`Page ${startPage} not found in volume ${volume} (computed PDF page ${firstPdfPage})`);
+  // Refine firstPdfPage: search for a page near the estimate that has
+  // "Cite as: X U.S. startPage" in the upper band row.
+  // That page's standalone printed-page number gives the exact offset.
+  let firstPdfPage = roughEstimate;
+  const searchStart = Math.max(1, roughEstimate - 5);
+  const searchEnd = Math.min(doc.numPages, roughEstimate + 10);
+  for (let si = searchStart; si <= searchEnd; si++) {
+    const sp = await doc.getPage(si);
+    const sh = sp.getViewport({ scale: 1.0 }).height;
+    const sc: PageTextContent = await sp.getTextContent();
+    const upperItems: { text: string; x: number }[] = [];
+    for (const item of sc.items) {
+      if ('str' in item && item.str.trim() && item.transform[5] > sh * 0.83) {
+        upperItems.push({ text: item.str.trim(), x: item.transform[4] });
+      }
+    }
+    const upperText = upperItems.map(it => it.text).join(' ');
+    if (!new RegExp(`Cite\\s+as:\\s*\\d+\\s+U\\.\\s*S\\.\\s+${startPage}\\b`).test(upperText)) continue;
+
+    // Found the "Cite as: X U.S. startPage" page. The standalone page number
+    // at left (x < 200) or right (x > 400) margin gives the current printed page.
+    const pageNumItem = upperItems.find(it => /^\d{3,}$/.test(it.text) && (it.x < 200 || it.x > 400));
+    if (pageNumItem) {
+      firstPdfPage = startPage + (si - parseInt(pageNumItem.text));
+    } else {
+      // Fallback: "Cite as:" appears on the 2nd page of the case
+      firstPdfPage = si - 1;
+    }
+    break;
   }
 
-  // Find case boundaries: scan forward until Cite as: references a different start page
+  if (firstPdfPage < 1 || firstPdfPage > doc.numPages) {
+    throw new Error(`Page ${startPage} not found in volume ${volume} (estimated PDF page ${roughEstimate})`);
+  }
+
+  // Find case boundaries: stop when the band shows a new case starting.
+  // "OCTOBER TERM, YYYY" in the band marks the very first page of each new case.
+  // A different "Cite as: X U.S. Y" (Y ≠ startPage) also signals a new case.
   let lastPdfPage = firstPdfPage;
   for (let i = firstPdfPage + 1; i <= doc.numPages; i++) {
-    const citeAs = await getCiteAsPage(doc, i);
-    if (citeAs !== null && citeAs !== startPage) {
-      // This page belongs to a different case
-      break;
-    }
+    const lp = await doc.getPage(i);
+    const lh = lp.getViewport({ scale: 1.0 }).height;
+    const lc: PageTextContent = await lp.getTextContent();
+    const bandText = lc.items
+      .filter(item => 'str' in item && item.str.trim() && item.transform[5] >= lh * 0.80)
+      .map(item => (item as TextItem).str.trim())
+      .join(' ');
+
+    if (/OCTOBER TERM/.test(bandText)) break; // first page of a new case
+    const citeMatch = bandText.match(/Cite as:\s*\d+\s+U\.\s*S\.\s+(\d+)/);
+    if (citeMatch && parseInt(citeMatch[1]) !== startPage) break;
+
     lastPdfPage = i;
   }
 
@@ -160,11 +218,21 @@ export async function parseBoundVolumeCase(
       }
     }
 
-    // Extract section header
+    // Extract section header using lowest-y-row approach.
+    // Bound volumes (and prelim prints) have two rows in the band:
+    //   upper row (y ≈ 83–84%): page number + "Cite as:" or case name
+    //   lower row (y ≈ 80–81%): section label (Syllabus, Opinion of the Court, etc.)
+    // By selecting only the lowest-y row we isolate the section label.
     const headerItems = allItems.filter(it => it.y >= hYMin && it.y <= hYMax);
-    headerItems.sort((a, b) => a.x - b.x);
-    const headerText = headerItems.map(it => it.text.trim()).join(' ');
-    const sectionHeader = parseSectionHeader(headerText);
+    let sectionHeader = null;
+    if (headerItems.length > 0) {
+      const snapY = (y: number) => Math.round(y / 2) * 2;
+      const minY = Math.min(...headerItems.map(it => snapY(it.y)));
+      const lowestRow = headerItems.filter(it => snapY(it.y) <= minY + 4);
+      lowestRow.sort((a, b) => a.x - b.x);
+      const headerText = lowestRow.map(it => it.text.trim()).join(' ');
+      sectionHeader = parseSectionHeader(headerText);
+    }
 
     // Extract case title from first page header area
     if (i === firstPdfPage) {
