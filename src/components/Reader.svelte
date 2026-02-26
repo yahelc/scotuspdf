@@ -705,14 +705,16 @@
     | { type: 'text' | 'fn'; value: string }
     | { type: 'cite'; volume: string; page: string; pinpoint: string; caseName: string; display: string }
     | { type: 'ref'; direction: string; page: string }
-    | { type: 'usc'; title: string; section: string; subsection: string; display: string };
+    | { type: 'usc'; title: string; section: string; subsection: string; display: string }
+    | { type: 'fr'; volume: string; page: string; year: string; display: string };
 
   /** Split paragraph text into segments of plain text, footnote refs, citations, and cross-refs */
   function parseSegments(text: string): Segment[] {
     const segments: Segment[] = [];
     // cite marker: {{cite:volume:page:pinpoint:caseName:display}} — caseName may be empty
-    // usc marker: {{usc:title:section:subsection:display}}
-    const regex = /\{\{fn:(\d+)\}\}|\{\{cite:(\d+):(\d+):(\d+):([^:]*):(.+?)\}\}|\{\{ref:(ante|post):(\d+)\}\}|\{\{usc:(\d+):(\d+[a-z]?):([^:]*):([^}]+)\}\}/g;
+    // usc marker:  {{usc:title:section:subsection:display}}
+    // fr marker:   {{fr:volume:page:year:display}}
+    const regex = /\{\{fn:(\d+)\}\}|\{\{cite:(\d+):(\d+):(\d+):([^:]*):(.+?)\}\}|\{\{ref:(ante|post):(\d+)\}\}|\{\{usc:(\d+):(\d+[a-z]?):([^:]*):([^}]+)\}\}|\{\{fr:(\d+):(\d+):(\d{4}):([^}]+)\}\}/g;
     let lastIndex = 0;
     let match;
     while ((match = regex.exec(text)) !== null) {
@@ -727,6 +729,8 @@
         segments.push({ type: 'ref', direction: match[7], page: match[8] });
       } else if (match[9] !== undefined) {
         segments.push({ type: 'usc', title: match[9], section: match[10], subsection: match[11], display: match[12] });
+      } else if (match[13] !== undefined) {
+        segments.push({ type: 'fr', volume: match[13], page: match[14], year: match[15], display: match[16] });
       }
       lastIndex = regex.lastIndex;
     }
@@ -775,9 +779,20 @@
       return;
     }
     uscHtml = null; uscLoading = true;
-    const decisionYear = opinion?.decidedDate
-      ? parseInt(opinion.decidedDate.split(' ').at(-1)!)
-      : new Date().getFullYear();
+    let decisionYear: number;
+    if (opinion?.decidedDate) {
+      decisionYear = parseInt(opinion.decidedDate.split(' ').at(-1)!);
+    } else {
+      // BV cases have empty decidedDate — estimate from URL
+      const bvMatch = pdfUrl.match(/boundvolumes\/(\d+)bv\.pdf/i);
+      if (bvMatch) {
+        // US Reports volume → approximate year: vol 502 ≈ 1991, every ~3 vols/year
+        decisionYear = Math.floor(1991 + (parseInt(bvMatch[1]) - 502) / 3);
+      } else {
+        const termYear = termFromUrl(pdfUrl);
+        decisionYear = termYear ? parseInt(termYear) + 1 : new Date().getFullYear() - 2;
+      }
+    }
     try {
       const res = await fetch(`/api/uscode?title=${title}&section=${section}&year=${decisionYear}`);
       const data = await res.json();
@@ -810,6 +825,40 @@
       Promise.resolve().then(() => highlightUscSubsection(uscContentEl!, uscSubsection));
     }
   });
+
+  // Federal Register modal state
+  const frCache = new Map<string, { html: string; issueDate: string | null; sourceUrl: string | null }>();
+  let showFrModal = $state(false);
+  let frLoading = $state(false);
+  let frHtml = $state<string | null>(null);
+  let frVolume = $state('');
+  let frPage = $state('');
+  let frYear = $state('');
+  let frDisplay = $state('');
+  let frIssueDate = $state<string | null>(null);
+  let frSourceUrl = $state<string | null>(null);
+
+  async function openFrModal(volume: string, page: string, year: string, display: string) {
+    showFrModal = true;
+    frVolume = volume; frPage = page; frYear = year; frDisplay = display;
+    const cacheKey = `${volume}:${page}`;
+    if (frCache.has(cacheKey)) {
+      const c = frCache.get(cacheKey)!;
+      frHtml = c.html; frIssueDate = c.issueDate; frSourceUrl = c.sourceUrl;
+      frLoading = false;
+      return;
+    }
+    frHtml = null; frLoading = true;
+    try {
+      const res = await fetch(`/api/fedregister?volume=${volume}&page=${page}`);
+      const data = await res.json();
+      frHtml = data.html ?? null;
+      frIssueDate = data.issueDate ?? null;
+      frSourceUrl = data.sourceUrl ?? null;
+      frCache.set(cacheKey, { html: frHtml!, issueDate: frIssueDate, sourceUrl: frSourceUrl });
+    } catch { frHtml = null; }
+    frLoading = false;
+  }
 
   async function openCiteModal(volume: string, page: string, caseName: string = '') {
     citeModalVolume = volume;
@@ -1376,6 +1425,38 @@
     </div>
   {/if}
 
+  <!-- Federal Register modal -->
+  {#if showFrModal}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-backdrop" onclick={() => showFrModal = false}></div>
+    <div class="modal usc-modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <span class="modal-title">{frDisplay}</span>
+        {#if frIssueDate}
+          <span class="modal-edition-badge">{frIssueDate}</span>
+        {/if}
+        {#if frSourceUrl}
+          <a class="modal-oyez-btn" href={frSourceUrl} target="_blank" rel="noopener">govinfo.gov ↗</a>
+        {/if}
+        <button class="modal-close" onclick={() => showFrModal = false}>&times;</button>
+      </div>
+      <div class="modal-body usc-modal-body">
+        {#if frLoading}
+          <div class="cite-modal-loading"><div class="spinner"></div></div>
+        {:else if frHtml}
+          {@html frHtml}
+        {:else}
+          <p style="color: var(--text-secondary); text-align: center; margin-top: 2rem;">
+            Could not load Federal Register text.
+            {#if frSourceUrl}
+              <br><a href={frSourceUrl} target="_blank" rel="noopener">View on govinfo.gov ↗</a>
+            {/if}
+          </p>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
   <!-- Disclaimer overlay (one-time) -->
   {#if showDisclaimer}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1447,6 +1528,8 @@
                   <button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>
                 {:else if seg.type === 'usc'}
                   <button class="usc-link" onclick={(e) => { e.stopPropagation(); openUscModal(seg.title, seg.section, seg.subsection, seg.display); }}>{seg.display}</button>
+                {:else if seg.type === 'fr'}
+                  <button class="usc-link" onclick={(e) => { e.stopPropagation(); openFrModal(seg.volume, seg.page, seg.year, seg.display); }}>{seg.display}</button>
                 {:else}
                   {seg.value}
                 {/if}
@@ -1460,7 +1543,7 @@
             {#each chapter.footnotes as fn}
               <div class="chapter-footnote" id="{chapter.id}-fn-{fn.id}">
                 <button class="fn-back" onclick={() => scrollToRef(chapter.id, fn.id)}>{fn.id}</button>
-                <span class="fn-text">{#each parseSegments(fn.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else if seg.type === 'usc'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openUscModal(seg.title, seg.section, seg.subsection, seg.display); }}>{seg.display}</button>{:else}{seg.value}{/if}{/each}</span>
+                <span class="fn-text">{#each parseSegments(fn.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else if seg.type === 'usc'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openUscModal(seg.title, seg.section, seg.subsection, seg.display); }}>{seg.display}</button>{:else if seg.type === 'fr'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openFrModal(seg.volume, seg.page, seg.year, seg.display); }}>{seg.display}</button>{:else}{seg.value}{/if}{/each}</span>
               </div>
             {/each}
           </div>
@@ -1481,7 +1564,7 @@
         <span class="footnote-num">{activeFootnote.id}</span>
         <button class="footnote-close" onclick={dismissFootnote}>&times;</button>
       </div>
-      <p>{#each parseSegments(activeFootnote.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else if seg.type === 'usc'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openUscModal(seg.title, seg.section, seg.subsection, seg.display); }}>{seg.display}</button>{:else}{seg.value}{/if}{/each}</p>
+      <p>{#each parseSegments(activeFootnote.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else if seg.type === 'usc'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openUscModal(seg.title, seg.section, seg.subsection, seg.display); }}>{seg.display}</button>{:else if seg.type === 'fr'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openFrModal(seg.volume, seg.page, seg.year, seg.display); }}>{seg.display}</button>{:else}{seg.value}{/if}{/each}</p>
     </div>
   {/if}
   </div>

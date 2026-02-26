@@ -348,6 +348,27 @@ export function markCitations(text: string, ctx: CitationContext = { lastUscTitl
     );
   }
 
+  // Federal Register citations: "90 Fed. Reg. 15625, 15626 (2025)"
+  // Each page number becomes its own {{fr:...}} marker; the year stays as plain text after.
+  result = result.replace(
+    /(\d+)\s+Fed\.\s*Reg\.\s*(\d+)((?:,\s*\d+)+)?(?:\s*\((\d{4})\))?(?=[\s,;."\u2019]|$)/g,
+    (match, volume, firstPage, continuations, year) => {
+      // Fall back to computing year from FR volume (vol 1 = 1936, so year = 1935 + vol)
+      const yr = year || String(1935 + parseInt(volume));
+      const firstDisplay = `${volume} Fed. Reg. ${firstPage}`;
+      let out = `{{fr:${volume}:${firstPage}:${yr}:${firstDisplay}}}`;
+      if (continuations) {
+        const pageRe = /,\s*(\d+)/g;
+        let m;
+        while ((m = pageRe.exec(continuations)) !== null) {
+          out += `, {{fr:${volume}:${m[1]}:${yr}:${m[1]}}}`;
+        }
+      }
+      if (year) out += ` (${year})`;
+      return out;
+    }
+  );
+
   return result;
 }
 

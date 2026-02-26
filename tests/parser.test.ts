@@ -419,6 +419,25 @@ describe('markCitations', () => {
     const result2 = markCitations('See §§1701(a), 1702(a)(1)(B).', ctx);
     expect(result2).toContain('{{usc:50:1701:(a):');
   });
+
+  it('marks a single Fed. Reg. citation with year', () => {
+    const result = markCitations('See 90 Fed. Reg. 15625 (2025).');
+    expect(result).toContain('{{fr:90:15625:2025:90 Fed. Reg. 15625}}');
+    expect(result).toContain('(2025)');
+  });
+
+  it('splits a multi-page Fed. Reg. citation into two markers', () => {
+    const result = markCitations('90 Fed. Reg. 15625, 15626 (2025).');
+    expect(result).toContain('{{fr:90:15625:2025:90 Fed. Reg. 15625}}');
+    expect(result).toContain('{{fr:90:15626:2025:15626}}');
+    expect(result).toContain('(2025)');
+  });
+
+  it('infers Fed. Reg. year from volume when not in parens', () => {
+    // vol 90 = 1935 + 90 = 2025
+    const result = markCitations('See 90 Fed. Reg. 15625.');
+    expect(result).toContain('{{fr:90:15625:2025:90 Fed. Reg. 15625}}');
+  });
 });
 
 describe('parseSectionHeader — title-case patterns (preliminary prints)', () => {
