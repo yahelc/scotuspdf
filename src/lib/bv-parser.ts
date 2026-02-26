@@ -19,8 +19,10 @@ interface PageTextContent {
  */
 async function findFrontMatterOffset(doc: any): Promise<number> {
   const numPages = doc.numPages;
-  // Scan first 100 pages (front matter is usually < 50 pages)
-  const scanLimit = Math.min(numPages, 100);
+  // Scan first 400 pages. Most volumes have < 50 pages of front matter, but some
+  // large volumes (e.g. vol 562) have 220+ pages of table-of-cases and indices
+  // before the first opinion, so 100 is not always sufficient.
+  const scanLimit = Math.min(numPages, 400);
 
   for (let i = 1; i <= scanLimit; i++) {
     const page = await doc.getPage(i);
@@ -133,7 +135,10 @@ export async function parseBoundVolumeCase(
   // That page's standalone printed-page number gives the exact offset.
   let firstPdfPage = roughEstimate;
   const searchStart = Math.max(1, roughEstimate - 5);
-  const searchEnd = Math.min(doc.numPages, roughEstimate + 10);
+  // Wide forward window: blank separator pages accumulate throughout a bound volume,
+  // causing the offset to drift by up to ~80 pages between the front matter
+  // (where roughOffset was measured) and later cases in the volume.
+  const searchEnd = Math.min(doc.numPages, roughEstimate + 80);
   for (let si = searchStart; si <= searchEnd; si++) {
     const sp = await doc.getPage(si);
     const sh = sp.getViewport({ scale: 1.0 }).height;
@@ -145,6 +150,12 @@ export async function parseBoundVolumeCase(
       }
     }
     const upperText = upperItems.map(it => it.text).join(' ');
+
+    // Early exit: if the band shows "Cite as: X U.S. Y" where Y > startPage,
+    // we've scanned past our target case into the next one.
+    const anyBvCite = upperText.match(/Cite\s+as:\s*\d+\s+U\.\s*S\.\s+(\d+)/);
+    if (anyBvCite && parseInt(anyBvCite[1]) > startPage) break;
+
     if (!new RegExp(`Cite\\s+as:\\s*\\d+\\s+U\\.\\s*S\\.\\s+${startPage}\\b`).test(upperText)) continue;
 
     // Found the "Cite as: X U.S. startPage" page. The standalone page number
@@ -185,6 +196,42 @@ export async function parseBoundVolumeCase(
   }
 
   let caseTitle = `${volume} U.S. ${startPage}`;
+
+  // Find the case name in the upper band row (y > 83%) on an even-printed-page.
+  // Odd printed pages carry "Cite as: X U.S. Y"; even pages carry the case name.
+  // The first page (startPage) shows "OCTOBER TERM" — its upper band is just a page number.
+  // Scan up to 4 pages past firstPdfPage to find the first even-printed-page with the name.
+  {
+    const titleSearchEnd = Math.min(doc.numPages, firstPdfPage + 4);
+    for (let ti = firstPdfPage; ti <= titleSearchEnd; ti++) {
+      const tp = await doc.getPage(ti);
+      const th = tp.getViewport({ scale: 1.0 }).height;
+      const tc: PageTextContent = await tp.getTextContent();
+
+      const upperBandItems: { text: string; x: number }[] = [];
+      for (const item of tc.items) {
+        // Stay within the header band (80–90%): avoids typesetter codes at the very top (> 90%)
+        if ('str' in item && item.str.trim() &&
+            item.transform[5] > th * 0.83 && item.transform[5] <= th * 0.90) {
+          upperBandItems.push({ text: item.str.trim(), x: item.transform[4] });
+        }
+      }
+
+      // Skip odd printed pages (they show "Cite as:") and first page (shows "OCTOBER TERM")
+      const upperText = upperBandItems.map(it => it.text).join(' ');
+      if (/Cite\s+as:/i.test(upperText) || /OCTOBER TERM/.test(upperText)) continue;
+
+      // Exclude standalone page numbers at left/right margins
+      const nameItems = upperBandItems.filter(
+        it => !(/^\d+$/.test(it.text) && (it.x < 200 || it.x > 400))
+      );
+      const candidateText = nameItems.map(it => it.text.trim()).join(' ').trim();
+      if (!candidateText) continue; // first case page or page with only a page number
+
+      caseTitle = candidateText.replace(/\s+/g, ' ').trim();
+      break;
+    }
+  }
 
   // Extract text from our page range using the same approach as parsePdf
   const { buildParagraphs, tagBoilerplate, parseSectionHeader, dehyphenate, markCitations } = await import('./parser');
@@ -233,21 +280,6 @@ export async function parseBoundVolumeCase(
       lowestRow.sort((a, b) => a.x - b.x);
       const headerText = lowestRow.map(it => it.text.trim()).join(' ');
       sectionHeader = parseSectionHeader(headerText);
-    }
-
-    // Extract case title from first page header area
-    if (i === firstPdfPage) {
-      // Look for case name in the top header (above the "Cite as:" line)
-      const topItems = allItems
-        .filter(it => it.y > pageHeight * 0.90)
-        .sort((a, b) => a.x - b.x);
-      const topText = topItems.map(it => it.text.trim()).join(' ');
-      // Even pages have case name, odd pages have "Cite as:"
-      // Try to extract from even-page header format: "CASE NAME v. OTHER"
-      const caseMatch = topText.match(/([A-Z][A-Z\s.]+v\.\s+[A-Z][A-Z\s.]+?)(?:\s+\d|$)/);
-      if (caseMatch) {
-        caseTitle = caseMatch[1].trim();
-      }
     }
 
     // Body text

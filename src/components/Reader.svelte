@@ -820,14 +820,24 @@
         outerName: for (const cases of termResults) {
           if (!Array.isArray(cases)) continue;
           for (const c of cases) {
+            // Volume guard: if Oyez has explicit citation volume data and it doesn't
+            // match the volume we're looking for, skip — it's a different case entirely.
+            // This prevents false matches when the same party name appears across volumes
+            // (e.g. "United States" is in hundreds of cases across every term).
+            const oyezVol = parseInt(c.citation?.volume);
+            if (!isNaN(oyezVol) && oyezVol !== vol) continue;
+
             const oyezName = (c.name || '').toLowerCase();
             const p1Match = p1 && oyezName.includes(p1);
             const p2Match = p2 && oyezName.includes(p2);
             const p1Distinctive = p1.split(/\s+/).length >= 3;
-            const p2Distinctive = p2.split(/\s+/).length >= 2;
+            // 3+ words required for p2 to be distinctive on its own.
+            // 2-word names like "United States" or "New York" appear in hundreds of
+            // cases across every term and must not match without p1 also matching.
+            const p2Distinctive = p2.split(/\s+/).length >= 3;
             // Match if both parties found, OR one party is distinctive and matches alone.
             // - p1 with 3+ words: handles abbreviations in p2 (e.g. "OSHA", "EPA")
-            // - p2 with 2+ words: handles abbreviations in p1 (e.g. "FCC", "SEC")
+            // - p2 with 3+ words: handles abbreviations in p1 (e.g. "FCC", "SEC")
             if ((p1Match && (p2Match || p1Distinctive)) || (p2Match && p2Distinctive)) {
               foundHref = c.href;
               break outerName;
@@ -1170,6 +1180,21 @@
         <button class="modal-close" onclick={() => showCiteModal = false}>&times;</button>
       </div>
       <div class="modal-body">
+        <div class="modal-section cite-modal-render-section">
+          {#if citeModalSlipUrl}
+            <a class="cite-modal-render-link" href={citeModalSlipUrl} target="_blank" rel="noopener">
+              Read {citeModalTitle} →
+            </a>
+            <p class="cite-modal-render-note">Experimental: reads from the SCOTUS slip opinion PDF</p>
+          {:else if parseInt(citeModalVolume) <= 591}
+            <a class="cite-modal-render-link" href="/read/bv/{citeModalVolume}/{citeModalPage}" target="_blank" rel="noopener">
+              Read {citeModalTitle} →
+            </a>
+            <p class="cite-modal-render-note">Experimental: reads from the SCOTUS bound volume PDF</p>
+          {:else}
+            <p class="cite-modal-render-note">Bound volume not yet published for this case</p>
+          {/if}
+        </div>
         {#if citeModalLoading}
           <div class="cite-modal-loading"><div class="spinner"></div></div>
         {:else}
@@ -1250,21 +1275,6 @@
           {/if}
         {/if}
 
-        <div class="modal-section cite-modal-render-section">
-          {#if citeModalSlipUrl}
-            <a class="cite-modal-render-link" href={citeModalSlipUrl} target="_blank" rel="noopener">
-              Try to render this decision →
-            </a>
-            <p class="cite-modal-render-note">Experimental: reads from the SCOTUS slip opinion PDF</p>
-          {:else if parseInt(citeModalVolume) <= 591}
-            <a class="cite-modal-render-link" href="/read/bv/{citeModalVolume}/{citeModalPage}" target="_blank" rel="noopener">
-              Try to render this decision →
-            </a>
-            <p class="cite-modal-render-note">Experimental: reads from the SCOTUS bound volume PDF</p>
-          {:else}
-            <p class="cite-modal-render-note">Bound volume not yet published for this case</p>
-          {/if}
-        </div>
       </div>
     </div>
   {/if}
@@ -1291,6 +1301,7 @@
     ontouchstart={handleTouchStart}
     ontouchend={handleTouchEnd}
   >
+    <div class="content-inner">
     <div class="case-header">
       <h1>{opinion.caseTitle}</h1>
       {#if opinion.docketNumber}
@@ -1357,6 +1368,7 @@
         {/if}
       </section>
     {/each}
+    </div><!-- content-inner -->
   </div>
 
   <!-- Footnote popover (fixed position, outside column layout) -->
@@ -1696,12 +1708,15 @@
     flex: 1;
     overflow-y: auto;
     padding: 1.5rem 1rem;
-    max-width: 680px;
-    margin: 0 auto;
     width: 100%;
     font-family: var(--font-body);
     line-height: 1.7;
     position: relative;
+  }
+
+  .content-inner {
+    max-width: 680px;
+    margin: 0 auto;
   }
 
   .content.paged {
@@ -1712,6 +1727,10 @@
     column-fill: auto;
     column-gap: 0;
     column-width: var(--col-width, 100vw);
+  }
+
+  .content.paged .content-inner {
+    max-width: none;
   }
 
   .content-wrapper {

@@ -9,6 +9,7 @@ import {
   extractDocketNumber,
   extractDecidedDate,
   parseSectionHeader,
+  markCitations,
 } from '../src/lib/parser';
 
 describe('fixSmallCaps', () => {
@@ -303,5 +304,136 @@ describe('buildParagraphs', () => {
     const paras = buildParagraphs('J USTICE T HOMAS delivered the opinion.');
     expect(paras[0].text).toContain('JUSTICE');
     expect(paras[0].text).toContain('THOMAS');
+  });
+});
+
+describe('markCitations', () => {
+  it('wraps a bare US Reports citation above threshold', () => {
+    const result = markCitations('See 553 U. S. 285.');
+    expect(result).toContain('{{cite:553:285:285::553 U. S. 285}}');
+    expect(result).toContain('See ');
+    expect(result).toContain('.');
+  });
+
+  it('leaves citations below volume 502 unchanged', () => {
+    const input = 'See 401 U. S. 424.';
+    expect(markCitations(input)).toBe(input);
+  });
+
+  it('links volume 502 (boundary — first linked volume)', () => {
+    const result = markCitations('502 U. S. 1');
+    expect(result).toContain('{{cite:502:1:1::');
+  });
+
+  it('does not link volume 501', () => {
+    const input = '501 U. S. 1';
+    expect(markCitations(input)).toBe(input);
+  });
+
+  it('includes pinpoint in the cite marker when present', () => {
+    const result = markCitations('553 U. S. 285, 294');
+    expect(result).toContain('{{cite:553:285:294::553 U. S. 285, 294}}');
+  });
+
+  it('includes pinpoint with "at" keyword', () => {
+    const result = markCitations('553 U. S. 285, at 294');
+    expect(result).toContain('{{cite:553:285:294::');
+  });
+
+  it('extracts case name from "Party v. Party, X U. S. Y" pattern', () => {
+    const result = markCitations('Trump v. Vance, 591 U. S. 786.');
+    expect(result).toContain('{{cite:591:786:786:Trump v. Vance:Trump v. Vance, 591 U. S. 786}}');
+  });
+
+  it('extracts case name and pinpoint together', () => {
+    const result = markCitations('Clinton v. Jones, 520 U. S. 681, 694');
+    expect(result).toContain('{{cite:520:681:694:Clinton v. Jones:Clinton v. Jones, 520 U. S. 681, 694}}');
+  });
+
+  it('wraps ante cross-references', () => {
+    expect(markCitations('see ante, at 14')).toContain('{{ref:ante:14}}');
+  });
+
+  it('wraps post cross-references', () => {
+    expect(markCitations('post, at 48')).toContain('{{ref:post:48}}');
+  });
+
+  it('cross-reference markers are case-insensitive', () => {
+    expect(markCitations('Ante, at 5')).toContain('{{ref:ante:5}}');
+  });
+
+  it('marks multiple citations in one string', () => {
+    const result = markCitations('Compare 553 U. S. 285 with 591 U. S. 786.');
+    expect(result).toContain('{{cite:553:');
+    expect(result).toContain('{{cite:591:');
+  });
+
+  it('leaves non-citation text unchanged', () => {
+    const input = 'The court held the statute unconstitutional.';
+    expect(markCitations(input)).toBe(input);
+  });
+
+  it('does not mark citations inside already-wrapped markers', () => {
+    // The single-pass approach means once a cite marker is written it won't be re-processed
+    const result = markCitations('553 U. S. 285 and 591 U. S. 786');
+    const citeMatches = [...result.matchAll(/\{\{cite:/g)];
+    expect(citeMatches).toHaveLength(2); // exactly two, not nested
+  });
+});
+
+describe('parseSectionHeader — title-case patterns (preliminary prints)', () => {
+  it('parses "Gorsuch, J., concurring" (prelim print format)', () => {
+    const h = parseSectionHeader('Gorsuch, J., concurring');
+    expect(h).not.toBeNull();
+    expect(h!.id).toBe('concurring-gorsuch');
+    expect(h!.author).toBe('Gorsuch');
+    expect(h!.title).toContain('concurring');
+  });
+
+  it('parses "Roberts, C. J., dissenting" (Chief Justice, prelim print)', () => {
+    const h = parseSectionHeader('Roberts, C. J., dissenting');
+    expect(h).not.toBeNull();
+    expect(h!.id).toBe('dissenting-roberts');
+    expect(h!.author).toBe('Roberts');
+  });
+
+  it('parses "Sotomayor, J., concurring in judgment"', () => {
+    const h = parseSectionHeader('Sotomayor, J., concurring in judgment');
+    expect(h).not.toBeNull();
+    expect(h!.id).toBe('concurring-sotomayor');
+  });
+
+  it('parses "Breyer, J., concurring in the judgment"', () => {
+    const h = parseSectionHeader('Breyer, J., concurring in the judgment');
+    expect(h).not.toBeNull();
+    expect(h!.id).toBe('concurring-breyer');
+  });
+
+  it('parses historical justice "Ginsburg, J., dissenting"', () => {
+    const h = parseSectionHeader('Ginsburg, J., dissenting');
+    expect(h).not.toBeNull();
+    expect(h!.id).toBe('dissenting-ginsburg');
+    expect(h!.author).toBe('Ginsburg');
+  });
+
+  it('parses multi-justice "Breyer, Sotomayor, and Kagan, JJ., dissenting"', () => {
+    const h = parseSectionHeader('Breyer, Sotomayor, and Kagan, JJ., dissenting');
+    expect(h).not.toBeNull();
+    expect(h!.id).toBe('dissenting-breyer');
+    expect(h!.author).toBe('Breyer');
+    expect(h!.title).toContain('dissenting');
+  });
+
+  it('parses multi-justice "Thomas and Gorsuch, JJ., concurring"', () => {
+    const h = parseSectionHeader('Thomas and Gorsuch, JJ., concurring');
+    expect(h).not.toBeNull();
+    expect(h!.id).toBe('concurring-thomas');
+    expect(h!.author).toBe('Thomas');
+  });
+
+  it('does not confuse title-case justice names with body text', () => {
+    // "Roberts" alone is not a section header
+    expect(parseSectionHeader('Roberts')).toBeNull();
+    expect(parseSectionHeader('Gorsuch writes that')).toBeNull();
   });
 });
