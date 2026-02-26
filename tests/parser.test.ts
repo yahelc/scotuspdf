@@ -379,6 +379,46 @@ describe('markCitations', () => {
     const citeMatches = [...result.matchAll(/\{\{cite:/g)];
     expect(citeMatches).toHaveLength(2); // exactly two, not nested
   });
+
+  it('marks a full USC citation', () => {
+    const result = markCitations('See 28 U. S. C. § 2254(d).');
+    expect(result).toContain('{{usc:28:2254:(d):28 U. S. C. § 2254(d)}}');
+  });
+
+  it('marks a bare §-ref after a full USC citation in the same text', () => {
+    const result = markCitations('50 U. S. C. §1701(a). And see §1702(a).');
+    expect(result).toContain('{{usc:50:1701:(a):');
+    expect(result).toContain('{{usc:50:1702:(a):§1702(a)}}');
+  });
+
+  it('splits a multi-section bare ref into two separate markers', () => {
+    const ctx = { lastUscTitle: '50' };
+    const result = markCitations('§§1701(a), 1702(a)(1)(B).', ctx);
+    // Two independent markers — first keeps §§ prefix, second has bare section number
+    expect(result).toContain('{{usc:50:1701:(a):§§1701(a)}}');
+    expect(result).toContain('{{usc:50:1702:(a)(1)(B):1702(a)(1)(B)}}');
+    // The ", " between them is plain text, not inside a marker
+    expect(result).toContain('}},' );
+  });
+
+  it('splits a multi-section full USC citation into separate markers', () => {
+    const result = markCitations('28 U. S. C. §§ 1254, 2241(a).');
+    expect(result).toContain('{{usc:28:1254::28 U. S. C. §§ 1254}}');
+    expect(result).toContain('{{usc:28:2241:(a):2241(a)}}');
+  });
+
+  it('does not mark bare §-ref when no USC title has been seen', () => {
+    const result = markCitations('See § 2254.');
+    expect(result).not.toContain('{{usc:');
+  });
+
+  it('threads USC title context across paragraph calls via shared ctx', () => {
+    const ctx = { lastUscTitle: null as string | null };
+    markCitations('50 U. S. C. §1701(a)', ctx);
+    expect(ctx.lastUscTitle).toBe('50');
+    const result2 = markCitations('See §§1701(a), 1702(a)(1)(B).', ctx);
+    expect(result2).toContain('{{usc:50:1701:(a):');
+  });
 });
 
 describe('parseSectionHeader — title-case patterns (preliminary prints)', () => {

@@ -704,13 +704,15 @@
   type Segment =
     | { type: 'text' | 'fn'; value: string }
     | { type: 'cite'; volume: string; page: string; pinpoint: string; caseName: string; display: string }
-    | { type: 'ref'; direction: string; page: string };
+    | { type: 'ref'; direction: string; page: string }
+    | { type: 'usc'; title: string; section: string; subsection: string; display: string };
 
   /** Split paragraph text into segments of plain text, footnote refs, citations, and cross-refs */
   function parseSegments(text: string): Segment[] {
     const segments: Segment[] = [];
     // cite marker: {{cite:volume:page:pinpoint:caseName:display}} — caseName may be empty
-    const regex = /\{\{fn:(\d+)\}\}|\{\{cite:(\d+):(\d+):(\d+):([^:]*):(.+?)\}\}|\{\{ref:(ante|post):(\d+)\}\}/g;
+    // usc marker: {{usc:title:section:subsection:display}}
+    const regex = /\{\{fn:(\d+)\}\}|\{\{cite:(\d+):(\d+):(\d+):([^:]*):(.+?)\}\}|\{\{ref:(ante|post):(\d+)\}\}|\{\{usc:(\d+):(\d+[a-z]?):([^:]*):([^}]+)\}\}/g;
     let lastIndex = 0;
     let match;
     while ((match = regex.exec(text)) !== null) {
@@ -723,6 +725,8 @@
         segments.push({ type: 'cite', volume: match[2], page: match[3], pinpoint: match[4], caseName: match[5], display: match[6] });
       } else if (match[7] !== undefined) {
         segments.push({ type: 'ref', direction: match[7], page: match[8] });
+      } else if (match[9] !== undefined) {
+        segments.push({ type: 'usc', title: match[9], section: match[10], subsection: match[11], display: match[12] });
       }
       lastIndex = regex.lastIndex;
     }
@@ -745,6 +749,67 @@
   let citeModalLoading = $state(false);
   let citeFactsExpanded = $state(false);
   let citeConclusionExpanded = $state(false);
+
+  // USC modal state
+  const uscCache = new Map<string, { html: string; editionYear: number | null; sourceUrl: string | null }>();
+  let showUscModal = $state(false);
+  let uscLoading = $state(false);
+  let uscHtml = $state<string | null>(null);
+  let uscTitle = $state('');
+  let uscSection = $state('');
+  let uscSubsection = $state('');
+  let uscDisplay = $state('');
+  let uscEditionYear = $state<number | null>(null);
+  let uscSourceUrl = $state<string | null>(null);
+  let uscContentEl: HTMLElement | undefined = $state();
+
+  async function openUscModal(title: string, section: string, subsection: string, display: string) {
+    showUscModal = true;
+    uscTitle = title; uscSection = section;
+    uscSubsection = subsection; uscDisplay = display;
+    const cacheKey = `${title}:${section}`;
+    if (uscCache.has(cacheKey)) {
+      const c = uscCache.get(cacheKey)!;
+      uscHtml = c.html; uscEditionYear = c.editionYear; uscSourceUrl = c.sourceUrl;
+      uscLoading = false;
+      return;
+    }
+    uscHtml = null; uscLoading = true;
+    const decisionYear = opinion?.decidedDate
+      ? parseInt(opinion.decidedDate.split(' ').at(-1)!)
+      : new Date().getFullYear();
+    try {
+      const res = await fetch(`/api/uscode?title=${title}&section=${section}&year=${decisionYear}`);
+      const data = await res.json();
+      uscHtml = data.html ?? null;
+      uscEditionYear = data.editionYear ?? null;
+      uscSourceUrl = data.sourceUrl ?? null;
+      uscCache.set(cacheKey, { html: uscHtml!, editionYear: uscEditionYear, sourceUrl: uscSourceUrl });
+    } catch { uscHtml = null; }
+    uscLoading = false;
+  }
+
+  function highlightUscSubsection(container: HTMLElement, subsection: string) {
+    // subsection is e.g. "(d)" or "(d)(1)" — match on the first group "(d)"
+    const target = subsection.match(/(\([^)]+\))/)?.[1] ?? subsection;
+    if (!target) return;
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    let node: Text | null;
+    while ((node = walker.nextNode() as Text | null)) {
+      if (node.textContent?.trimStart().startsWith(target)) {
+        const el = node.parentElement!;
+        el.classList.add('usc-highlight');
+        el.scrollIntoView({ block: 'center', behavior: 'instant' });
+        break;
+      }
+    }
+  }
+
+  $effect(() => {
+    if (showUscModal && uscHtml && uscSubsection && uscContentEl) {
+      Promise.resolve().then(() => highlightUscSubsection(uscContentEl!, uscSubsection));
+    }
+  });
 
   async function openCiteModal(volume: string, page: string, caseName: string = '') {
     citeModalVolume = volume;
@@ -1279,6 +1344,38 @@
     </div>
   {/if}
 
+  <!-- USC statute modal -->
+  {#if showUscModal}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-backdrop" onclick={() => showUscModal = false}></div>
+    <div class="modal usc-modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <span class="modal-title">{uscDisplay}</span>
+        {#if uscEditionYear}
+          <span class="modal-edition-badge">{uscEditionYear} ed.</span>
+        {/if}
+        {#if uscSourceUrl}
+          <a class="modal-oyez-btn" href={uscSourceUrl} target="_blank" rel="noopener">govinfo.gov ↗</a>
+        {/if}
+        <button class="modal-close" onclick={() => showUscModal = false}>&times;</button>
+      </div>
+      <div class="modal-body usc-modal-body" bind:this={uscContentEl}>
+        {#if uscLoading}
+          <div class="cite-modal-loading"><div class="spinner"></div></div>
+        {:else if uscHtml}
+          {@html uscHtml}
+        {:else}
+          <p style="color: var(--text-secondary); text-align: center; margin-top: 2rem;">
+            Could not load statute text.
+            {#if uscSourceUrl}
+              <br><a href={uscSourceUrl} target="_blank" rel="noopener">View on govinfo.gov ↗</a>
+            {/if}
+          </p>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
   <!-- Disclaimer overlay (one-time) -->
   {#if showDisclaimer}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1348,6 +1445,8 @@
                   <button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>
                 {:else if seg.type === 'ref'}
                   <button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>
+                {:else if seg.type === 'usc'}
+                  <button class="usc-link" onclick={(e) => { e.stopPropagation(); openUscModal(seg.title, seg.section, seg.subsection, seg.display); }}>{seg.display}</button>
                 {:else}
                   {seg.value}
                 {/if}
@@ -1361,7 +1460,7 @@
             {#each chapter.footnotes as fn}
               <div class="chapter-footnote" id="{chapter.id}-fn-{fn.id}">
                 <button class="fn-back" onclick={() => scrollToRef(chapter.id, fn.id)}>{fn.id}</button>
-                <span class="fn-text">{#each parseSegments(fn.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else}{seg.value}{/if}{/each}</span>
+                <span class="fn-text">{#each parseSegments(fn.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else if seg.type === 'usc'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openUscModal(seg.title, seg.section, seg.subsection, seg.display); }}>{seg.display}</button>{:else}{seg.value}{/if}{/each}</span>
               </div>
             {/each}
           </div>
@@ -1382,7 +1481,7 @@
         <span class="footnote-num">{activeFootnote.id}</span>
         <button class="footnote-close" onclick={dismissFootnote}>&times;</button>
       </div>
-      <p>{#each parseSegments(activeFootnote.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else}{seg.value}{/if}{/each}</p>
+      <p>{#each parseSegments(activeFootnote.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else if seg.type === 'usc'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openUscModal(seg.title, seg.section, seg.subsection, seg.display); }}>{seg.display}</button>{:else}{seg.value}{/if}{/each}</p>
     </div>
   {/if}
   </div>
@@ -2413,6 +2512,45 @@
   .ref-link:hover {
     color: var(--text);
     text-decoration-style: solid;
+  }
+
+  .usc-link {
+    display: inline;
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+    font-size: inherit;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
+  }
+
+  .usc-link:hover {
+    text-decoration-style: solid;
+  }
+
+  .usc-modal .modal-body {
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    line-height: 1.7;
+  }
+
+  .modal-edition-badge {
+    flex-shrink: 0;
+    font-family: var(--font-ui);
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.1rem 0.35rem;
+  }
+
+  .usc-modal-body :global(.usc-highlight) {
+    background-color: rgba(255, 220, 0, 0.5);
+    border-radius: 2px;
   }
 
   .cite-modal-loading {

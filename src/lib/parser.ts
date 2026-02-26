@@ -246,8 +246,52 @@ export function dehyphenate(text: string): string {
  *
  * Only links volumes ≥ 502 (roughly when supremecourt.gov coverage starts).
  * Marker format: cite:volume:page:pinpoint:caseName:display  (caseName may be empty)
+ *
+ * ctx: mutable object shared across paragraph calls so that bare `§1701(a)` refs
+ * can inherit the title number from a preceding `50 U. S. C. §1701(a)` citation.
  */
-export function markCitations(text: string): string {
+
+export interface CitationContext {
+  lastUscTitle: string | null;
+}
+
+/** Apply fn only to the non-marker segments of text, leaving {{...}} markers untouched. */
+function applyToNonMarkers(text: string, fn: (s: string) => string): string {
+  const parts = text.split(/(\{\{.*?\}\})/);
+  return parts.map((part, i) => (i % 2 === 0 ? fn(part) : part)).join('');
+}
+
+/**
+ * Build one or more {{usc:...}} markers for a single- or multi-section citation.
+ * Each section in a comma-separated list (e.g. "§§1701(a), 1702(a)(1)(B)") becomes
+ * its own marker, with a plain-text ", " between them so parseSegments renders them
+ * as two independent clickable links.
+ */
+function expandUscSections(
+  title: string,
+  section: string,
+  subsRaw: string | undefined,
+  continuations: string | undefined,
+  firstDisplay: string
+): string {
+  const sub1 = subsRaw ? subsRaw.replace(/\s+/g, '') : '';
+  let result = `{{usc:${title}:${section}:${sub1}:${firstDisplay}}}`;
+
+  if (continuations) {
+    const contRe = /,\s*(?:and\s+)?(\d+[a-z]?)((?:\s*\([^)\s]{1,8}\))*)/g;
+    let m;
+    while ((m = contRe.exec(continuations)) !== null) {
+      const sec = m[1];
+      const subs = m[2] ? m[2].replace(/\s+/g, '') : '';
+      const display = `${sec}${m[2] ?? ''}`;
+      result += `, {{usc:${title}:${sec}:${subs}:${display}}}`;
+    }
+  }
+
+  return result;
+}
+
+export function markCitations(text: string, ctx: CitationContext = { lastUscTitle: null }): string {
   // Single pass: optionally match a "Party v. Party, " prefix before the citation.
   // Using one pass prevents Step 2 from re-processing the display text inside markers
   // already written by Step 1 (which would produce nested/broken markers).
@@ -272,12 +316,46 @@ export function markCitations(text: string): string {
     (match, direction, page) => `{{ref:${direction.toLowerCase()}:${page}}}`
   );
 
+  // USC citations: "28 U. S. C. § 2254(d)" or "28 U.S.C. §§ 1254, 2241(a)"
+  // Captures optional comma-separated continuation sections so each becomes its own marker.
+  // Updates ctx.lastUscTitle so subsequent bare §-refs can inherit the title number.
+  result = result.replace(
+    /(\d+)\s+U\.\s*S\.\s*C\.\s*§§?\s*(\d+[a-z]?)((?:\s*\([^)\s]{1,8}\))+)?((?:,\s*(?:and\s+)?\d+[a-z]?(?:\s*\([^)\s]{1,8}\))*)+)?(?=[\s,;.")]|$)/g,
+    (match, title, section, subs, continuations) => {
+      ctx.lastUscTitle = title;
+      const firstDisplay = continuations
+        ? match.slice(0, match.length - continuations.length)
+        : match;
+      return expandUscSections(title, section, subs, continuations, firstDisplay);
+    }
+  );
+
+  // Bare section refs: "§§1701(a), 1702(a)(1)(B)" or "§ 1702(a)"
+  // Only fires when a USC title has already been established in this chapter.
+  // Each comma-separated section becomes its own marker.
+  if (ctx.lastUscTitle) {
+    const lastTitle = ctx.lastUscTitle;
+    result = applyToNonMarkers(result, (segment) =>
+      segment.replace(
+        /§§?\s*(\d+[a-z]?)((?:\s*\([^)\s]{1,8}\))+)?((?:,\s*(?:and\s+)?\d+[a-z]?(?:\s*\([^)\s]{1,8}\))*)+)?(?=[\s,;.")]|$)/g,
+        (match, section, subs, continuations) => {
+          const firstDisplay = continuations
+            ? match.slice(0, match.length - continuations.length)
+            : match;
+          return expandUscSections(lastTitle, section, subs, continuations, firstDisplay);
+        }
+      )
+    );
+  }
+
   return result;
 }
 
 export function buildParagraphs(text: string): Paragraph[] {
   const paragraphs: Paragraph[] = [];
   const rawParagraphs = text.split(/\n{2,}/);
+  // Shared context so bare §-refs can inherit the last USC title seen in this chapter
+  const citationCtx: CitationContext = { lastUscTitle: null };
 
   for (const raw of rawParagraphs) {
     let trimmed = raw.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
@@ -308,7 +386,7 @@ export function buildParagraphs(text: string): Paragraph[] {
     trimmed = trimmed.replace(/ ([.,;:!?)\]»\u201d\u2019])/g, '$1');
 
     // Mark US Reports citations and ante/post cross-references
-    trimmed = markCitations(trimmed);
+    trimmed = markCitations(trimmed, citationCtx);
 
     // Merge with previous paragraph if this is a continuation:
     // previous paragraph doesn't end with sentence-ending punctuation,
