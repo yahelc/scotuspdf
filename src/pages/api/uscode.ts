@@ -10,11 +10,18 @@ export const prerender = false;
 const EDITION_LAG = 1;
 const MAX_FALLBACK_YEARS = 5;
 
+interface EditionResult {
+  htmlUrl: string;
+  editionYear: number;
+  baseHtmlUrl: string;
+  baseYear: number;
+}
+
 async function findBestEditionHtml(
   title: number,
   section: number,
   startYear: number
-): Promise<{ htmlUrl: string; editionYear: number } | null> {
+): Promise<EditionResult | null> {
   // Step 1: Use the link service to get the base granule path (it caps at the latest main
   // edition — typically 2022 or older — but gives us the title/chapter/section path we need)
   let basePdfLocation: string | null = null;
@@ -72,10 +79,17 @@ async function findBestEditionHtml(
     const best = probeResults
       .filter((r): r is { year: number; url: string } => r !== null)
       .sort((a, b) => b.year - a.year)[0];
-    if (best) return { htmlUrl: best.url, editionYear: best.year };
+    if (best) return { htmlUrl: best.url, editionYear: best.year, baseHtmlUrl, baseYear };
   }
 
-  return { htmlUrl: baseHtmlUrl, editionYear: baseYear };
+  return { htmlUrl: baseHtmlUrl, editionYear: baseYear, baseHtmlUrl, baseYear };
+}
+
+// govinfo sometimes serves its navigation/homepage with HTTP 200 when a specific
+// annual-supplement file doesn't exist (soft 404). Detect by looking for a marker
+// that appears in the nav page but never in a real USC section document.
+function isGovInfoNavPage(html: string): boolean {
+  return html.includes('GovInfo logo');
 }
 
 export const GET: APIRoute = async ({ request }) => {
@@ -122,22 +136,41 @@ export const GET: APIRoute = async ({ request }) => {
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  const { htmlUrl, editionYear: actualEditionYear } = found;
+  let { htmlUrl, editionYear: actualEditionYear, baseHtmlUrl, baseYear } = found;
 
   // Fetch the HTML page (manual redirect so a govinfo 302→homepage doesn't sneak through)
-  let rawHtml: string;
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-    const htmlRes = await fetch(htmlUrl, { redirect: 'manual', signal: controller.signal });
-    clearTimeout(timeout);
-    if (htmlRes.status !== 200) {
-      return new Response(JSON.stringify({ error: 'fetch_failed' }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
+  async function fetchHtml(url: string): Promise<string | null> {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+      const res = await fetch(url, { redirect: 'manual', signal: controller.signal });
+      clearTimeout(timeout);
+      if (res.status !== 200) return null;
+      return await res.text();
+    } catch {
+      return null;
     }
-    rawHtml = await htmlRes.text();
-  } catch {
+  }
+
+  let rawHtml: string | null = await fetchHtml(htmlUrl);
+
+  // govinfo returns HTTP 200 with navigation HTML (soft 404) when an annual-supplement
+  // file doesn't exist. If detected, fall back to the base link-service edition.
+  if (rawHtml === null || isGovInfoNavPage(rawHtml)) {
+    if (htmlUrl !== baseHtmlUrl) {
+      rawHtml = await fetchHtml(baseHtmlUrl);
+      if (rawHtml !== null && !isGovInfoNavPage(rawHtml)) {
+        htmlUrl = baseHtmlUrl;
+        actualEditionYear = baseYear;
+      } else {
+        rawHtml = null;
+      }
+    } else {
+      rawHtml = null;
+    }
+  }
+
+  if (rawHtml === null) {
     return new Response(JSON.stringify({ error: 'fetch_failed' }), {
       headers: { 'Content-Type': 'application/json' },
     });
