@@ -14,9 +14,12 @@ interface PageTextContent {
 
 // Known justices for name normalization
 const KNOWN_JUSTICES: Record<string, string> = {
-  ROBERTS: 'Roberts', THOMAS: 'Thomas', ALITO: 'Alito',
-  SOTOMAYOR: 'Sotomayor', KAGAN: 'Kagan', GORSUCH: 'Gorsuch',
-  KAVANAUGH: 'Kavanaugh', BARRETT: 'Barrett', JACKSON: 'Jackson',
+  REHNQUIST: 'Rehnquist', STEVENS: 'Stevens', OCONNOR: "O'Connor",
+  SCALIA: 'Scalia', KENNEDY: 'Kennedy', SOUTER: 'Souter',
+  THOMAS: 'Thomas', GINSBURG: 'Ginsburg', BREYER: 'Breyer',
+  ROBERTS: 'Roberts', ALITO: 'Alito', SOTOMAYOR: 'Sotomayor',
+  KAGAN: 'Kagan', GORSUCH: 'Gorsuch', KAVANAUGH: 'Kavanaugh',
+  BARRETT: 'Barrett', JACKSON: 'Jackson',
 };
 
 interface SectionHeader {
@@ -119,6 +122,35 @@ export function parseSectionHeader(headerText: string): SectionHeader | null {
     }
   }
 
+  // Title-case single justice (preliminary print running header format):
+  // "Gorsuch, J., concurring" / "Roberts, C. J., dissenting"
+  // Extra spaces around commas (e.g. "J. , concurring") are tolerated.
+  const titleJusticeMatch = raw.match(
+    /^([A-Z][a-z]+)\s*,\s*(?:C\.\s*)?J\.\s*,\s*(concurring|dissenting)(?:\s+in\s+(?:the\s+)?(?:judgment|part))?/i
+  );
+  if (titleJusticeMatch) {
+    const upperName = titleJusticeMatch[1].toUpperCase();
+    const type = titleJusticeMatch[2].toLowerCase();
+    const author = KNOWN_JUSTICES[upperName] ?? titleJusticeMatch[1];
+    const id = `${type}-${upperName.toLowerCase()}`;
+    const title = `${author}, ${type}`;
+    return { raw, normalized: title, id, title, author };
+  }
+
+  // Multi-justice title-case (preliminary print): "Breyer, Sotomayor , and Kagan , JJ., dissenting"
+  // "JJ." indicates a joined opinion by multiple justices. First name is used as primary author.
+  const multiJusticeMatch = raw.match(
+    /^([A-Z][a-z]+)[^.]*JJ\.\s*,\s*(concurring|dissenting)(?:\s+in\s+(?:the\s+)?(?:judgment|part))?/i
+  );
+  if (multiJusticeMatch) {
+    const upperName = multiJusticeMatch[1].toUpperCase();
+    const type = multiJusticeMatch[2].toLowerCase();
+    const author = KNOWN_JUSTICES[upperName] ?? multiJusticeMatch[1];
+    const id = `${type}-${upperName.toLowerCase()}`;
+    const title = `${author}, ${type}`;
+    return { raw, normalized: title, id, title, author };
+  }
+
   return null;
 }
 
@@ -202,6 +234,47 @@ export function dehyphenate(text: string): string {
   return result;
 }
 
+/**
+ * Detect US Reports citations and ante/post cross-references in text,
+ * wrapping them with inline markers for the frontend to render as links.
+ *
+ * With case name: `Trump v. United States, 603 U. S. 593`
+ *   → `{{cite:603:593:593:Trump v. United States:Trump v. United States, 603 U. S. 593}}`
+ * Bare citation:  `553 U. S. 285, 294`
+ *   → `{{cite:553:285:294::553 U. S. 285, 294}}`
+ * Ante/post:      `ante, at 14` → `{{ref:ante:14}}`
+ *
+ * Only links volumes ≥ 502 (roughly when supremecourt.gov coverage starts).
+ * Marker format: cite:volume:page:pinpoint:caseName:display  (caseName may be empty)
+ */
+export function markCitations(text: string): string {
+  // Single pass: optionally match a "Party v. Party, " prefix before the citation.
+  // Using one pass prevents Step 2 from re-processing the display text inside markers
+  // already written by Step 1 (which would produce nested/broken markers).
+  // Group 1 = firstParty, Group 2 = secondParty (both undefined for bare citations)
+  // Group 3 = volume, Group 4 = page, Group 5 = optional pinpoint
+  let result = text.replace(
+    /(?:([A-Z][\w']+(?:\s+(?:of\s+|the\s+|de\s+)?[A-Z][\w']+){0,4})\s+v\.\s+([A-Z][\w']+(?:\s+(?:of\s+|the\s+)?[A-Z]?[\w']+){0,3}),\s*)?(\d{1,3})\s+U\.\s*S\.\s+(\d{1,4})(?:\s*,\s*(?:at\s+)?(\d{1,4}))?/g,
+    (match, firstParty, secondParty, volume, page, pinpoint) => {
+      const vol = parseInt(volume);
+      if (vol < 502) return match;
+      const pin = pinpoint || page;
+      const caseName = firstParty && secondParty
+        ? `${firstParty.trim()} v. ${secondParty.trim()}`
+        : '';
+      return `{{cite:${volume}:${page}:${pin}:${caseName}:${match}}}`;
+    }
+  );
+
+  // Ante/post cross-references: "ante, at 14" / "post, at 48"
+  result = result.replace(
+    /\b(ante|post)\s*,\s*at\s+(\d{1,4})/gi,
+    (match, direction, page) => `{{ref:${direction.toLowerCase()}:${page}}}`
+  );
+
+  return result;
+}
+
 export function buildParagraphs(text: string): Paragraph[] {
   const paragraphs: Paragraph[] = [];
   const rawParagraphs = text.split(/\n{2,}/);
@@ -233,6 +306,9 @@ export function buildParagraphs(text: string): Paragraph[] {
     // where e.g. an italic word and its following Roman comma are separate pdfjs items.
     // In standard typography these characters are never preceded by a space.
     trimmed = trimmed.replace(/ ([.,;:!?)\]»\u201d\u2019])/g, '$1');
+
+    // Mark US Reports citations and ante/post cross-references
+    trimmed = markCitations(trimmed);
 
     // Merge with previous paragraph if this is a continuation:
     // previous paragraph doesn't end with sentence-ending punctuation,
@@ -483,6 +559,22 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
   const numPages = doc.numPages;
   const pagesToProcess = Math.min(numPages, options.maxPages ?? numPages);
 
+  // Detect preliminary print format by scanning page 1 for the
+  // "Page Proof Pending Publication" watermark (unique to this format).
+  // Preliminary prints have a two-row top header: running page header at y≈83-84%
+  // and section label at y≈80-81%. Slip opinions have only the section label.
+  let isPrelimPrint = false;
+  {
+    const p1 = await doc.getPage(1);
+    const p1content: PageTextContent = await p1.getTextContent();
+    for (const item of p1content.items) {
+      if ('str' in item && /Page Proof/.test((item as any).str)) {
+        isPrelimPrint = true;
+        break;
+      }
+    }
+  }
+
   // First pass: determine the section header Y position by analyzing page 1
   // The header line (Syllabus, Opinion of the Court, etc.) appears at a consistent Y
   // on SCOTUS PDFs — typically around y=640-650 on a 792pt page
@@ -500,13 +592,23 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
   const pages: PageResult[] = [];
 
   for (let i = 1; i <= pagesToProcess; i++) {
+    // Preliminary prints: page 1 is a cover page (no opinion content).
+    if (isPrelimPrint && i === 1) {
+      pages.push({ sectionHeader: null, bodyLines: [], footnotes: new Map(), footnoteContinuation: '' });
+      continue;
+    }
+
     const page = await doc.getPage(i);
     const textContent: PageTextContent = await page.getTextContent();
     const viewport = page.getViewport({ scale: 1.0 });
     const pageHeight = viewport.height;
 
-    // Adjust header Y range based on page height (proportional)
-    const hYMin = pageHeight * 0.80;
+    // Header band: section labels appear at ~80-84% from bottom.
+    // Preliminary prints: section label at ~80.3-80.8%, running header at ~83-84%.
+    //   Use 0.79 floor to catch dissent labels that drop to ~80.3%.
+    // Slip opinions: section label at ~81.8-82.3%; keep 0.80 floor so body text
+    //   lines just below the header zone don't bleed into the band.
+    const hYMin = isPrelimPrint ? pageHeight * 0.79 : pageHeight * 0.80;
     const hYMax = pageHeight * 0.84;
 
     const allItems: { y: number; x: number; text: string; fontSize: number }[] = [];
@@ -521,11 +623,25 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
       }
     }
 
-    // Extract section header from the header band
+    // Extract section header from the lowest y-position row in the header band.
+    //
+    // Preliminary prints have TWO rows in this band:
+    //   y≈83-84%: running page header ("OCTOBER TERM, 2021" / case name alternating)
+    //   y≈80-81%: section label ("Syllabus", "Per Curiam", "Gorsuch, J., concurring")
+    // Slip opinions have only ONE row (the section label at ~81-82%).
+    //
+    // By selecting only the lowest y row we always get the section label and
+    // ignore the alternating recto/verso running header above it.
     const headerItems = allItems.filter((it) => it.y >= hYMin && it.y <= hYMax);
-    headerItems.sort((a, b) => a.x - b.x);
-    const headerText = headerItems.map((it) => it.text.trim()).join(' ');
-    const sectionHeader = parseSectionHeader(headerText);
+    let sectionHeader: SectionHeader | null = null;
+    if (headerItems.length > 0) {
+      const snapY = (y: number) => Math.round(y / 2) * 2;
+      const minY = Math.min(...headerItems.map((it) => snapY(it.y)));
+      const lowestRowItems = headerItems.filter((it) => snapY(it.y) <= minY + 4);
+      lowestRowItems.sort((a, b) => a.x - b.x);
+      const headerText = lowestRowItems.map((it) => it.text.trim()).join(' ');
+      sectionHeader = parseSectionHeader(headerText);
+    }
 
     // Body text: everything below the header band and above the footer
     const bodyItems = allItems.filter((it) => {
@@ -540,6 +656,9 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
         if (/^\d+$/.test(t)) return false;
         if (/^\(Slip Opinion\)/.test(t)) return false;
       }
+      // Preliminary print watermark ("Page Proof Pending Publication") appears
+      // mid-page at large font size — exclude it from body text on all pages.
+      if (/Page Proof/.test(it.text)) return false;
       return true;
     });
     // Sort by y descending then x ascending. Use coarse rounding (nearest 2px)
@@ -899,12 +1018,67 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
     });
   }
 
+  // For preliminary prints: split chapters at inline section openers.
+  // Prelim print running headers sometimes don't update when a new section starts mid-page,
+  // so body text like "Justice Sotomayor, concurring." may be bundled into the wrong chapter.
+  const resolvedDatas: typeof chapterDatas = [];
+  if (isPrelimPrint) {
+    // Matches: "Justice Sotomayor, concurring." / "Chief Justice Roberts, dissenting."
+    // / "Justice Breyer, Justice Sotomayor, and Justice Kagan, dissenting."
+    const bodyOpenerRe =
+      /^(?:Chief\s+)?Justice\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s*,\s*(?:and\s+)?(?:Chief\s+)?Justice\s+[A-Z][a-z]+)*\s*,\s*(concurring|dissenting)(?:\s+in\s+(?:the\s+)?(?:judgment|part))?\.?\s*$/i;
+
+    for (const cd of chapterDatas) {
+      const lines = cd.text.split('\n');
+      let segStart = 0;
+      let segHeader = cd.header;
+      let didSplit = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        const raw = lines[i].trim();
+        if (!raw) continue;
+        const m = raw.match(bodyOpenerRe);
+        if (!m) continue;
+
+        const nameParts = m[1].trim().split(/\s+/);
+        const lastName = nameParts[nameParts.length - 1].toUpperCase();
+        const type = m[2].toLowerCase();
+        const newId = `${type}-${lastName.toLowerCase()}`;
+        if (newId === segHeader.id) continue; // same section, no split needed
+
+        const author = KNOWN_JUSTICES[lastName] ?? nameParts[nameParts.length - 1];
+        const newHeader: SectionHeader = {
+          raw,
+          normalized: `${author}, ${type}`,
+          id: newId,
+          title: `${author}, ${type}`,
+          author,
+        };
+
+        const segText = lines.slice(segStart, i).join('\n');
+        if (segText.trim()) {
+          resolvedDatas.push({ header: segHeader, text: segText, footnotes: didSplit ? new Map() : cd.footnotes });
+        }
+        segStart = i;
+        segHeader = newHeader;
+        didSplit = true;
+      }
+
+      const remainingText = lines.slice(segStart).join('\n');
+      if (remainingText.trim()) {
+        resolvedDatas.push({ header: segHeader, text: remainingText, footnotes: didSplit ? new Map() : cd.footnotes });
+      }
+    }
+  } else {
+    resolvedDatas.push(...chapterDatas);
+  }
+
   // Build final chapters
-  const chapters: Chapter[] = chapterDatas.map((cd) => {
+  const chapters: Chapter[] = resolvedDatas.map((cd) => {
     // Convert footnote map to sorted array
     const footnotes: { id: number; text: string }[] = [];
     for (const [id, text] of cd.footnotes) {
-      footnotes.push({ id, text: dehyphenate(text) });
+      footnotes.push({ id, text: markCitations(dehyphenate(text)) });
     }
     footnotes.sort((a, b) => a.id - b.id);
 

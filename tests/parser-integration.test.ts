@@ -124,6 +124,22 @@ describe('Trump v. US (23-939)', () => {
     const bpjParas = sotomayor!.paragraphs.filter(p => /^\{\{bpj:/.test(p.text));
     expect(bpjParas.length).toBeGreaterThan(0);
   });
+
+  it('body paragraphs contain {{cite:}} markers for US Reports citations', () => {
+    const allText = result.chapters.flatMap(c => c.paragraphs).map(p => p.text).join(' ');
+    expect(allText).toContain('{{cite:');
+  });
+
+  it('body paragraphs contain {{ref:}} markers for ante/post cross-references', () => {
+    const allText = result.chapters.flatMap(c => c.paragraphs).map(p => p.text).join(' ');
+    expect(allText).toContain('{{ref:');
+  });
+
+  it('a specific named citation is correctly marked (Trump v. Vance)', () => {
+    const allText = result.chapters.flatMap(c => c.paragraphs).map(p => p.text).join(' ');
+    expect(allText).toContain('{{cite:591:786:');
+    expect(allText).toContain(':Trump v. Vance:');
+  });
 });
 
 describe('Bowe v. US (24-5438)', () => {
@@ -161,6 +177,71 @@ describe('Doe v. Dynamic Physical Therapy (preliminary print)', () => {
 
   it('extracts docket number 25-180', () => {
     expect(result.docketNumber).toBe('25-180');
+  });
+
+  it('extracts decided date', () => {
+    expect(result.decidedDate).toBe('December 8, 2025');
+  });
+
+  it('body paragraphs contain {{cite:}} markers for US Reports citations', () => {
+    const allText = result.chapters.flatMap(c => c.paragraphs).map(p => p.text).join(' ');
+    expect(allText).toContain('{{cite:');
+  });
+
+  it('does not include "Page Proof" watermark text in body', () => {
+    const allText = result.chapters.flatMap(c => c.paragraphs).map(p => p.text).join(' ');
+    expect(allText).not.toContain('Page Proof');
+  });
+});
+
+describe('Kemp v. United States (596us2r38) — prelim print mid-page section split', () => {
+  let result: Awaited<ReturnType<typeof parsePdf>>;
+
+  it('parses without error', async () => {
+    const data = loadFixture('596us2r38_e29f.pdf');
+    result = await parsePdf(data, 'https://www.supremecourt.gov/opinions/21pdf/596us2r38_e29f.pdf');
+  }, 30000);
+
+  it('extracts case title "KEMP v. UNITED STATES"', () => {
+    expect(result.caseTitle.toUpperCase()).toContain('KEMP');
+    expect(result.caseTitle.toUpperCase()).toContain('UNITED STATES');
+  });
+
+  it('extracts docket number 21-5726', () => {
+    expect(result.docketNumber).toBe('21-5726');
+  });
+
+  it('has 4 chapters: Syllabus, Opinion, Sotomayor concurrence, Gorsuch dissent', () => {
+    expect(result.chapters).toHaveLength(4);
+    expect(result.chapters.find(c => c.id === 'syllabus')).toBeDefined();
+    expect(result.chapters.find(c => c.id === 'opinion-majority')).toBeDefined();
+    expect(result.chapters.find(c => c.id === 'concurring-sotomayor')).toBeDefined();
+    expect(result.chapters.find(c => c.id === 'dissenting-gorsuch')).toBeDefined();
+  });
+
+  it('Sotomayor concurrence is correctly split from Gorsuch dissent', () => {
+    // Regression: prelim print running header said "Gorsuch, J., dissenting" when
+    // Sotomayor's concurrence started mid-page. The split must produce separate chapters.
+    const sotomayor = result.chapters.find(c => c.id === 'concurring-sotomayor');
+    const gorsuch = result.chapters.find(c => c.id === 'dissenting-gorsuch');
+    expect(sotomayor).toBeDefined();
+    expect(gorsuch).toBeDefined();
+
+    const sotomayorText = sotomayor!.paragraphs.map(p => p.text).join(' ');
+    const gorsuchText = gorsuch!.paragraphs.map(p => p.text).join(' ');
+
+    // Sotomayor's concurrence opener must be in her chapter
+    expect(sotomayorText).toContain('Sotomayor');
+    // Gorsuch's content must not bleed into Sotomayor's chapter
+    expect(sotomayorText).not.toContain('Gorsuch, dissenting');
+    // Gorsuch chapter has real content
+    expect(gorsuchText).toContain('Gorsuch');
+    expect(gorsuch!.paragraphs.length).toBeGreaterThan(2);
+  });
+
+  it('author fields are set on the split chapters', () => {
+    expect(result.chapters.find(c => c.id === 'concurring-sotomayor')!.author).toBe('Sotomayor');
+    expect(result.chapters.find(c => c.id === 'dissenting-gorsuch')!.author).toBe('Gorsuch');
   });
 });
 

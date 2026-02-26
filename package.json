@@ -8,7 +8,8 @@
     "preview": "astro preview",
     "astro": "astro",
     "test": "vitest run",
-    "deploy": "npm test && npm run build && npx netlify-cli deploy --prod --no-build"
+    "deploy": "npm test && npm run build && npx netlify-cli deploy --prod --no-build",
+    "build:cite-index": "npx tsx scripts/build-cite-index.ts"
   },
   "dependencies": {
     "@astrojs/netlify": "^6.3.0",

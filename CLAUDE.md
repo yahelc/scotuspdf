@@ -62,6 +62,10 @@ User → index.astro (paste URL) → /read/:term/:filename
 
 - **`src/lib/preferences.ts`** — localStorage for user preferences (fontSize, viewMode) and per-opinion reading position.
 
+- **`src/data/cite-index.json`** — Pre-built citation index mapping `"volume:page"` → `{term, filename, docket}` for OT2019–OT2024 (312 entries). Used by Reader.svelte to instantly resolve slip opinion links when a citation is clicked. **Refresh after each term completes** (typically July) by running `npm run build:cite-index` and committing the updated JSON. Built by cross-referencing supremecourt.gov listing pages (docket → PDF) with CourtListener API (docket → US Reports citation). Note: Oyez `citation.page` is null for OT2015+ so CourtListener is the correct source.
+
+- **`scripts/build-cite-index.ts`** — Script that builds `cite-index.json`. Run via `npm run build:cite-index`.
+
 ### URL Scheme
 
 - `/` — Home page (search box + recent opinions)
