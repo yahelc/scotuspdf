@@ -315,19 +315,19 @@ describe('markCitations', () => {
     expect(result).toContain('.');
   });
 
-  it('leaves citations below volume 502 unchanged', () => {
-    const input = 'See 401 U. S. 424.';
-    expect(markCitations(input)).toBe(input);
+  it('links pre-502 volume citations (threshold removed)', () => {
+    const result = markCitations('See 466 U. S. 668.');
+    expect(result).toContain('{{cite:466:668:668::');
   });
 
-  it('links volume 502 (boundary — first linked volume)', () => {
-    const result = markCitations('502 U. S. 1');
-    expect(result).toContain('{{cite:502:1:1::');
+  it('links Kimmelman/Strickland-style citations with pinpoint and year', () => {
+    const result = markCitations('Kimmelman v. Morrison, 477 U. S. 365, 377 (1986)');
+    expect(result).toContain('{{cite:477:365:377:Kimmelman v. Morrison:Kimmelman v. Morrison, 477 U. S. 365, 377 (1986)}}');
   });
 
-  it('does not link volume 501', () => {
-    const input = '501 U. S. 1';
-    expect(markCitations(input)).toBe(input);
+  it('captures inner citation inside (quoting ...) with year', () => {
+    const result = markCitations('(quoting Strickland v. Washington, 466 U. S. 668, 685 (1984))');
+    expect(result).toContain('{{cite:466:668:685:Strickland v. Washington:Strickland v. Washington, 466 U. S. 668, 685 (1984)}}');
   });
 
   it('includes pinpoint in the cite marker when present', () => {

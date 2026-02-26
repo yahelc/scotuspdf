@@ -860,7 +860,7 @@
     frLoading = false;
   }
 
-  async function openCiteModal(volume: string, page: string, caseName: string = '') {
+  async function openCiteModal(volume: string, page: string, caseName: string = '', display: string = '') {
     citeModalVolume = volume;
     citeModalPage = page;
     citeModalTitle = caseName || `${volume} U.S. ${page}`;
@@ -892,13 +892,24 @@
     try {
       const vol = parseInt(volume);
       const pg = parseInt(page);
-      // Estimate OT year from volume number (empirically calibrated: vol 502 ≈ OT1991, vol 553 ≈ OT2007)
-      const estimatedYear = Math.floor(1990 + (vol - 502) / 3);
       const currentYear = new Date().getFullYear();
-      const years = [
-        estimatedYear - 2, estimatedYear - 1, estimatedYear,
-        estimatedYear + 1, estimatedYear + 2,
-      ].filter(y => y >= 1991 && y <= currentYear);
+
+      // If the citation includes an explicit year like "(1986)", use it directly.
+      // SCOTUS terms start in October, so a case decided in calendar year Y is usually
+      // in OT(Y-1). We search the calendar year itself and up to 2 years before to cover both.
+      const explicitYear = display.match(/\((\d{4})\)/)?.[1];
+      let years: number[];
+      if (explicitYear) {
+        const cy = parseInt(explicitYear);
+        years = [cy - 2, cy - 1, cy].filter(y => y >= 1955 && y <= currentYear);
+      } else {
+        // Estimate OT year from volume number (empirically calibrated: vol 502 ≈ OT1991, vol 553 ≈ OT2007)
+        const estimatedYear = Math.floor(1990 + (vol - 502) / 3);
+        years = [
+          estimatedYear - 2, estimatedYear - 1, estimatedYear,
+          estimatedYear + 1, estimatedYear + 2,
+        ].filter(y => y >= 1955 && y <= currentYear);
+      }
 
       // Fetch all candidate terms in parallel. Use per_page=150 to cover 1990s terms
       // where the Court decided ~100-120 cases/term (which would exceed per_page=100).
@@ -1523,7 +1534,7 @@
                     onclick={(e) => showFootnote(parseInt(seg.value), chapter.footnotes, e)}
                   >{seg.value}</button>
                 {:else if seg.type === 'cite'}
-                  <button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>
+                  <button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName, seg.display); }}>{seg.display}</button>
                 {:else if seg.type === 'ref'}
                   <button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>
                 {:else if seg.type === 'usc'}
@@ -1543,7 +1554,7 @@
             {#each chapter.footnotes as fn}
               <div class="chapter-footnote" id="{chapter.id}-fn-{fn.id}">
                 <button class="fn-back" onclick={() => scrollToRef(chapter.id, fn.id)}>{fn.id}</button>
-                <span class="fn-text">{#each parseSegments(fn.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else if seg.type === 'usc'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openUscModal(seg.title, seg.section, seg.subsection, seg.display); }}>{seg.display}</button>{:else if seg.type === 'fr'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openFrModal(seg.volume, seg.page, seg.year, seg.display); }}>{seg.display}</button>{:else}{seg.value}{/if}{/each}</span>
+                <span class="fn-text">{#each parseSegments(fn.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName, seg.display); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else if seg.type === 'usc'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openUscModal(seg.title, seg.section, seg.subsection, seg.display); }}>{seg.display}</button>{:else if seg.type === 'fr'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openFrModal(seg.volume, seg.page, seg.year, seg.display); }}>{seg.display}</button>{:else}{seg.value}{/if}{/each}</span>
               </div>
             {/each}
           </div>
@@ -1564,7 +1575,7 @@
         <span class="footnote-num">{activeFootnote.id}</span>
         <button class="footnote-close" onclick={dismissFootnote}>&times;</button>
       </div>
-      <p>{#each parseSegments(activeFootnote.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else if seg.type === 'usc'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openUscModal(seg.title, seg.section, seg.subsection, seg.display); }}>{seg.display}</button>{:else if seg.type === 'fr'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openFrModal(seg.volume, seg.page, seg.year, seg.display); }}>{seg.display}</button>{:else}{seg.value}{/if}{/each}</p>
+      <p>{#each parseSegments(activeFootnote.text) as seg}{#if seg.type === 'cite'}<button class="cite-link" onclick={(e) => { e.stopPropagation(); openCiteModal(seg.volume, seg.page, seg.caseName, seg.display); }}>{seg.display}</button>{:else if seg.type === 'ref'}<button class="ref-link" onclick={(e) => { e.stopPropagation(); handleRefClick(seg.direction, seg.page); }}>{seg.direction}, at {seg.page}</button>{:else if seg.type === 'usc'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openUscModal(seg.title, seg.section, seg.subsection, seg.display); }}>{seg.display}</button>{:else if seg.type === 'fr'}<button class="usc-link" onclick={(e) => { e.stopPropagation(); openFrModal(seg.volume, seg.page, seg.year, seg.display); }}>{seg.display}</button>{:else}{seg.value}{/if}{/each}</p>
     </div>
   {/if}
   </div>

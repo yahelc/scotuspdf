@@ -296,12 +296,12 @@ export function markCitations(text: string, ctx: CitationContext = { lastUscTitl
   // Using one pass prevents Step 2 from re-processing the display text inside markers
   // already written by Step 1 (which would produce nested/broken markers).
   // Group 1 = firstParty, Group 2 = secondParty (both undefined for bare citations)
-  // Group 3 = volume, Group 4 = page, Group 5 = optional pinpoint
+  // Group 3 = volume, Group 4 = page, Group 5 = optional pinpoint, Group 6 = optional year
   let result = text.replace(
-    /(?:([A-Z][\w']+(?:\s+(?:of\s+|the\s+|de\s+)?[A-Z][\w']+){0,4})\s+v\.\s+([A-Z][\w']+(?:\s+(?:of\s+|the\s+)?[A-Z]?[\w']+){0,3}),\s*)?(\d{1,3})\s+U\.\s*S\.\s+(\d{1,4})(?:\s*,\s*(?:at\s+)?(\d{1,4}))?/g,
-    (match, firstParty, secondParty, volume, page, pinpoint) => {
+    /(?:([A-Z][\w']+(?:\s+(?:of\s+|the\s+|de\s+)?[A-Z][\w']+){0,4})\s+v\.\s+([A-Z][\w']+(?:\s+(?:of\s+|the\s+)?[A-Z]?[\w']+){0,3}),\s*)?(\d{1,3})\s+U\.\s*S\.\s+(\d{1,4})(?:\s*,\s*(?:at\s+)?(\d{1,4}))?(?:\s*\((\d{4})\))?/g,
+    (match, firstParty, secondParty, volume, page, pinpoint, _year) => {
       const vol = parseInt(volume);
-      if (vol < 502) return match;
+      if (vol < 1) return match;
       const pin = pinpoint || page;
       const caseName = firstParty && secondParty
         ? `${firstParty.trim()} v. ${secondParty.trim()}`
@@ -506,7 +506,10 @@ export function tagBoilerplate(paragraphs: Paragraph[]): Paragraph[] {
     if (/^\{\{/.test(text)) continue;
 
     if (/^NOTE: Where it is feasible/.test(text)) {
-      const cutoff = text.search(/\b321,\s*337\.\s*/);
+      // Don't require the period in the search: markCitations may have wrapped
+      // "200 U. S. 321, 337" in a {{cite:...}} marker, making it "321, 337}}."
+      // The period is found separately by indexOf below.
+      const cutoff = text.search(/\b321,\s*337/);
       if (cutoff > 0) {
         const endIdx = text.indexOf('.', cutoff + 4) + 1;
         const note = text.slice(0, endIdx).trim();
