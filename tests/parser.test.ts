@@ -364,6 +364,19 @@ describe('markCitations', () => {
     expect(result).toContain('{{cite:520:681:694:Clinton v. Jones:Clinton v. Jones, 520 U. S. 681, 694}}');
   });
 
+  it('captures case name with "for" connector (Students for Fair Admissions)', () => {
+    const input = 'Students for Fair Admissions, Inc. v. President and Fellows of Harvard College, 600 U. S. 181, 208 (2023)';
+    const result = markCitations(input);
+    expect(result).toContain('{{cite:600:181:208:Students for Fair Admissions, Inc. v. President and Fellows of Harvard College:');
+    expect(result).toContain(':' + input + '}}');
+  });
+
+  it('captures case name with multi-word secondParty using "of" and "and"', () => {
+    // "and" connector in secondParty: President and Fellows of Harvard College
+    const result = markCitations('Grutter v. Bollinger, 539 U. S. 306');
+    expect(result).toContain('{{cite:539:306:306:Grutter v. Bollinger:Grutter v. Bollinger, 539 U. S. 306}}');
+  });
+
   it('wraps ante cross-references', () => {
     expect(markCitations('see ante, at 14')).toContain('{{ref:ante:14}}');
   });

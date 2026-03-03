@@ -298,7 +298,7 @@ export function markCitations(text: string, ctx: CitationContext = { lastUscTitl
   // Group 1 = firstParty, Group 2 = secondParty (both undefined for bare citations)
   // Group 3 = volume, Group 4 = page, Group 5 = optional pinpoint, Group 6 = optional year
   let result = text.replace(
-    /(?:([A-Z][\w']+(?:\s+(?:of\s+|the\s+|de\s+)?[A-Z][\w']+){0,4})\s+v\.\s+([A-Z][\w']+(?:\s+(?:of\s+|the\s+)?[A-Z]?[\w']+){0,3}),\s*)?(\d{1,3})\s+U\.\s*S\.\s+(\d{1,4})(?:\s*,\s*(?:at\s+)?(\d{1,4}))?(?:\s*\((\d{4})\))?/g,
+    /(?:([A-Z][\w']+(?:\s+(?:of\s+|the\s+|de\s+|for\s+|and\s+)?[A-Z][\w']+){0,5}(?:,\s*(?:Inc|Corp|Co|Ltd|LLC|LLP|Jr|Sr|Bros|Cos)\.)?)\s+v\.\s+([A-Z][\w']+(?:\s+(?:of\s+|the\s+|for\s+|and\s+)?[A-Z]?[\w']+){0,4}),\s*)?(\d{1,3})\s+U\.\s*S\.\s+(\d{1,4})(?:\s*,\s*(?:at\s+)?(\d{1,4}))?(?:\s*\((\d{4})\))?/g,
     (match, firstParty, secondParty, volume, page, pinpoint, _year) => {
       const vol = parseInt(volume);
       if (vol < 1) return match;
