@@ -2,6 +2,8 @@
   import type { ParsedOpinion, Footnote } from '../lib/types';
   import { loadPreferences, savePreferences, loadPosition, savePosition } from '../lib/preferences';
   import type { Preferences } from '../lib/preferences';
+  import volTermMapRaw from '../data/vol-term-map.json';
+  const volTermMap = volTermMapRaw as Record<string, number>;
 
   interface CiteIndexEntry {
     term: string;
@@ -903,19 +905,29 @@
         const cy = parseInt(explicitYear);
         years = [cy - 2, cy - 1, cy].filter(y => y >= 1955 && y <= currentYear);
       } else {
-        // Estimate OT year from volume number (empirically calibrated: vol 502 ≈ OT1991, vol 553 ≈ OT2007)
-        const estimatedYear = Math.floor(1990 + (vol - 502) / 3);
-        years = [
-          estimatedYear - 2, estimatedYear - 1, estimatedYear,
-          estimatedYear + 1, estimatedYear + 2,
-        ].filter(y => y >= 1955 && y <= currentYear);
+        // Look up the exact term from the static vol→term map (built from Oyez data).
+        // A single US Reports volume can straddle two OT terms, so the map records
+        // the first term to report cases in that volume. Search ±2 around the mapped
+        // term to ensure we catch cases from the adjacent term as well.
+        // Fall back to a formula for volumes not in the map (very early volumes).
+        const mappedTerm = volTermMap[String(vol)];
+        let centerYear: number;
+        if (mappedTerm !== undefined) {
+          centerYear = mappedTerm;
+        } else if (vol >= 502) {
+          centerYear = Math.floor(1991 + (vol - 502) / 3);
+        } else {
+          centerYear = Math.round(1991 - (502 - vol) / 4.2);
+        }
+        years = [centerYear - 1, centerYear, centerYear + 1, centerYear + 2]
+          .filter(y => y >= 1955 && y <= currentYear);
       }
 
-      // Fetch all candidate terms in parallel. Use per_page=150 to cover 1990s terms
-      // where the Court decided ~100-120 cases/term (which would exceed per_page=100).
+      // Fetch all candidate terms in parallel. Use per_page=200 to cover peak terms
+      // (the Court decided up to 184 cases/term in the early 1970s).
       const termResults = await Promise.all(
         years.map(y =>
-          fetch(`https://api.oyez.org/cases?filter=term:${y}&per_page=150&page=0`)
+          fetch(`https://api.oyez.org/cases?filter=term:${y}&per_page=200&page=0`)
             .then(r => r.ok ? r.json() : [])
             .catch(() => [])
         )
@@ -1311,13 +1323,18 @@
               Read {citeModalTitle} →
             </a>
             <p class="cite-modal-render-note">Experimental: reads from the SCOTUS slip opinion PDF</p>
-          {:else if parseInt(citeModalVolume) <= 591}
+          {:else if parseInt(citeModalVolume) >= 502 && parseInt(citeModalVolume) <= 591}
             <a class="cite-modal-render-link" href="/read/bv/{citeModalVolume}/{citeModalPage}" target="_blank" rel="noopener">
               Read {citeModalTitle} →
             </a>
             <p class="cite-modal-render-note">Experimental: reads from the SCOTUS bound volume PDF</p>
+          {:else if parseInt(citeModalVolume) >= 1}
+            <a class="cite-modal-render-link" href="https://supreme.justia.com/cases/federal/us/{citeModalVolume}/{citeModalPage}/" target="_blank" rel="noopener">
+              View on Justia ↗
+            </a>
+            <p class="cite-modal-render-note">Full text from Justia's historical SCOTUS archive</p>
           {:else}
-            <p class="cite-modal-render-note">Bound volume not yet published for this case</p>
+            <p class="cite-modal-render-note">Bound volume not yet available for this case</p>
           {/if}
         </div>
         {#if citeModalLoading}
