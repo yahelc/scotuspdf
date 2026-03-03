@@ -534,21 +534,42 @@ export async function parseBoundVolumeCase(
     const header = page.sectionHeader;
 
     if (header && (!currentHeader || header.id !== currentHeader.id)) {
+      // Bound volumes: the transition page carries end-of-previous-section text before
+      // the new section's delivery line ("Justice X, with whom..."). Split body lines
+      // at the delivery line so the tail goes to the old chapter, not the new one.
+      // The delivery paragraph may wrap across multiple body lines, so we collect a
+      // lookahead window of the next few lines to check for the confirmation keyword.
+      let splitIdx = -1;
+      for (let i = 0; i < page.bodyLines.length; i++) {
+        const t = page.bodyLines[i].trim();
+        if (!t) continue;
+        if (/^(Justice\s+\w+|Chief\s+Justice\s+\w+|The\s+Chief\s+Justice)\b/i.test(t)) {
+          const window = page.bodyLines.slice(i, Math.min(i + 5, page.bodyLines.length)).join(' ');
+          if (/\b(delivered|concurring|dissenting|join\b)/i.test(window)) {
+            splitIdx = i;
+            break;
+          }
+        }
+      }
+      const preLines = splitIdx > 0 ? page.bodyLines.slice(0, splitIdx) : [];
+      const newLines = splitIdx >= 0 ? page.bodyLines.slice(splitIdx) : [...page.bodyLines];
+
       if (currentHeader) {
+        currentLines.push(...preLines);
         chapterDatas.push({ header: currentHeader, text: currentLines.join('\n'), footnotes: currentFootnotes });
-      } else if (currentLines.length > 0) {
+      } else if (currentLines.length > 0 || preLines.length > 0) {
         chapterDatas.push({
           header: { raw: 'Opinion', normalized: 'Opinion', id: 'opinion', title: 'Opinion', author: null },
-          text: currentLines.join('\n'),
+          text: [...currentLines, ...preLines].join('\n'),
           footnotes: currentFootnotes,
         });
       }
       currentHeader = header;
-      currentLines = [];
+      currentLines = newLines;
       currentFootnotes = new Map();
+    } else {
+      currentLines.push(...page.bodyLines);
     }
-
-    currentLines.push(...page.bodyLines);
 
     if (page.footnoteContinuation) {
       let maxId = 0;

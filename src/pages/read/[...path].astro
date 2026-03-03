@@ -16,6 +16,9 @@ if (parts[0] === 'bv' && parts.length >= 3) {
   const volume = parts[1];
   const page = parts[2];
   apiUrl = `/api/parse-bv?volume=${volume}&page=${page}`;
+} else if (parts[0] === 'usreports' && parts.length >= 3) {
+  // US Reports via govinfo.gov: /read/usreports/488/272
+  apiUrl = `/api/parse-usreports?vol=${parts[1]}&page=${parts[2]}`;
 } else if (parts.length >= 2) {
   // Slip opinion: /read/25/24-1287_4gcj.pdf
   const term = parts[0];

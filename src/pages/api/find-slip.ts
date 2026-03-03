@@ -19,7 +19,7 @@ export const GET: APIRoute = async ({ request }) => {
   }
 
   const termCode = term.slice(-2); // "2021" → "21"
-  if (parseInt(termCode) < 19) {
+  if (parseInt(termCode) < 15) {
     return new Response(JSON.stringify({ error: 'Term listing not available' }), {
       status: 404,
       headers: { 'Content-Type': 'application/json' },

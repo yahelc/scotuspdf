@@ -565,3 +565,34 @@ describe('parseSectionHeader — title-case patterns (preliminary prints)', () =
     expect(parseSectionHeader('Gorsuch writes that')).toBeNull();
   });
 });
+
+describe('parseSectionHeader — BV running header "Opinion of Name, J." format', () => {
+  it('parses "Opinion of Ginsburg, J." as separate opinion chapter', () => {
+    const h = parseSectionHeader('Opinion of Ginsburg, J.');
+    expect(h).not.toBeNull();
+    expect(h!.id).toBe('opinion-ginsburg');
+    expect(h!.author).toBe('Ginsburg');
+    expect(h!.title).toBe('Opinion of Ginsburg');
+  });
+
+  it('parses "Opinion of Scalia, J." (historical justice)', () => {
+    const h = parseSectionHeader('Opinion of Scalia, J.');
+    expect(h).not.toBeNull();
+    expect(h!.id).toBe('opinion-scalia');
+    expect(h!.author).toBe('Scalia');
+  });
+
+  it('parses "Opinion of Roberts, C. J." as majority opinion', () => {
+    const h = parseSectionHeader('Opinion of Roberts, C. J.');
+    expect(h).not.toBeNull();
+    expect(h!.id).toBe('opinion-majority');
+    expect(h!.author).toBe('Roberts');
+  });
+
+  it('still parses all-caps drop-cap "Opinion of G INSBURG , J." form', () => {
+    const h = parseSectionHeader('Opinion of G INSBURG , J.');
+    expect(h).not.toBeNull();
+    expect(h!.id).toBe('opinion-ginsburg');
+    expect(h!.author).toBe('Ginsburg');
+  });
+});
