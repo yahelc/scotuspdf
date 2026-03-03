@@ -1328,6 +1328,8 @@
               Read {citeModalTitle} →
             </a>
             <p class="cite-modal-render-note">Experimental: reads from the SCOTUS bound volume PDF</p>
+          {:else if citeModalPage.includes('_')}
+            <p class="cite-modal-render-note">Slip opinion — U.S. Reports page not yet assigned.</p>
           {:else if parseInt(citeModalVolume) >= 1 && !citeModalInfo}
             <a class="cite-modal-render-link" href="https://supreme.justia.com/cases/federal/us/{citeModalVolume}/{citeModalPage}/" target="_blank" rel="noopener">
               View on Justia ↗

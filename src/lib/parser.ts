@@ -297,8 +297,9 @@ export function markCitations(text: string, ctx: CitationContext = { lastUscTitl
   // already written by Step 1 (which would produce nested/broken markers).
   // Group 1 = firstParty, Group 2 = secondParty (both undefined for bare citations)
   // Group 3 = volume, Group 4 = page, Group 5 = optional pinpoint, Group 6 = optional year
+  // Page and pinpoint accept either digits or "___" (slip opinion not yet assigned a page).
   let result = text.replace(
-    /(?:([A-Z][\w']+(?:\s+(?:of\s+|the\s+|de\s+|for\s+|and\s+)?[A-Z][\w']+){0,5}(?:,\s*(?:Inc|Corp|Co|Ltd|LLC|LLP|Jr|Sr|Bros|Cos)\.)?)\s+v\.\s+([A-Z][\w']+(?:\s+(?:of\s+|the\s+|for\s+|and\s+)?[A-Z]?[\w']+){0,4}),\s*)?(\d{1,3})\s+U\.\s*S\.\s+(\d{1,4})(?:\s*,\s*(?:at\s+)?(\d{1,4}))?(?:\s*\((\d{4})\))?/g,
+    /(?:([A-Z][\w']+(?:\s+(?:of\s+|the\s+|de\s+|for\s+|and\s+)?[A-Z][\w']+){0,5}(?:,\s*(?:Inc|Corp|Co|Ltd|LLC|LLP|Jr|Sr|Bros|Cos)\.)?)\s+v\.\s+([A-Z][\w']+(?:\s+(?:of\s+|the\s+|for\s+|and\s+)?[A-Z]?[\w']+){0,4}),\s*)?(\d{1,3})\s+U\.\s*S\.\s+(\d{1,4}|_+)(?:\s*,\s*(?:at\s+)?(\d{1,4}|_+))?(?:\s*\((\d{4})\))?/g,
     (match, firstParty, secondParty, volume, page, pinpoint, _year) => {
       const vol = parseInt(volume);
       if (vol < 1) return match;
@@ -307,6 +308,21 @@ export function markCitations(text: string, ctx: CitationContext = { lastUscTitl
         ? `${firstParty.trim()} v. ${secondParty.trim()}`
         : '';
       return `{{cite:${volume}:${page}:${pin}:${caseName}:${match}}}`;
+    }
+  );
+
+  // Old Supreme Court reporters (pre-1875): "5 Cranch 173, 185 (1809)"
+  // Maps to the equivalent U.S. Reports volume for Justia link resolution.
+  // Volume offsets: Cranch→+4, Wheat.→+13, Pet.→+25, How.→+41, Black→+65, Wall.→+67
+  result = result.replace(
+    /(?:([A-Z][\w']+(?:\s+(?:of\s+|the\s+|de\s+|for\s+|and\s+)?[A-Z][\w']+){0,5}(?:,\s*(?:Inc|Corp|Co|Ltd|LLC|LLP|Jr|Sr|Bros|Cos)\.)?)\s+v\.\s+([A-Z][\w']+(?:\s+(?:of\s+|the\s+|for\s+|and\s+)?[A-Z]?[\w']+){0,4}),\s*)?(\d{1,2})\s+(Cranch|Wheat\.?|Pet\.?|How\.?|Black|Wall\.?)\s+(\d{1,4})(?:\s*,\s*(\d{1,4}))?(?:\s*\((\d{4})\))?/g,
+    (match, firstParty, secondParty, reporterVol, reporter, page, pin, _year) => {
+      const base = reporter.replace(/\.$/, '');
+      const offsets: Record<string, number> = { Cranch: 4, Wheat: 13, Pet: 25, How: 41, Black: 65, Wall: 67 };
+      const usVol = parseInt(reporterVol) + (offsets[base] ?? 0);
+      const usPin = pin || page;
+      const caseName = firstParty && secondParty ? `${firstParty.trim()} v. ${secondParty.trim()}` : '';
+      return `{{cite:${usVol}:${page}:${usPin}:${caseName}:${match}}}`;
     }
   );
 

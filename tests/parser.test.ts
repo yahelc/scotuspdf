@@ -377,6 +377,32 @@ describe('markCitations', () => {
     expect(result).toContain('{{cite:539:306:306:Grutter v. Bollinger:Grutter v. Bollinger, 539 U. S. 306}}');
   });
 
+  it('marks slip opinion citations with ___ page numbers', () => {
+    const input = 'Hain Celestial Group, Inc. v. Palmquist, 607 U. S. ___, ___ (2026)';
+    const result = markCitations(input);
+    expect(result).toContain('{{cite:607:___:___:Hain Celestial Group, Inc. v. Palmquist:');
+    expect(result).toContain(':' + input + '}}');
+  });
+
+  it('marks bare slip opinion ___ U. S. ___ without case name', () => {
+    const result = markCitations('607 U. S. ___, ___');
+    expect(result).toContain('{{cite:607:___:___::607 U. S. ___, ___}}');
+  });
+
+  it('marks old reporter citations (Cranch) and converts to U.S. volume', () => {
+    // 5 Cranch = U.S. vol 9 (Cranch offset +4)
+    const input = "Kempe's Lessee v. Kennedy, 5 Cranch 173, 185 (1809)";
+    const result = markCitations(input);
+    expect(result).toContain("{{cite:9:173:185:Kempe's Lessee v. Kennedy:");
+    expect(result).toContain(':' + input + '}}');
+  });
+
+  it('marks old reporter citation with Wheaton reporter', () => {
+    // 1 Wheat. = U.S. vol 14 (Wheat offset +13)
+    const result = markCitations('Martin v. Hunter\'s Lessee, 1 Wheat. 304 (1816)');
+    expect(result).toContain('{{cite:14:304:304:');
+  });
+
   it('wraps ante cross-references', () => {
     expect(markCitations('see ante, at 14')).toContain('{{ref:ante:14}}');
   });
