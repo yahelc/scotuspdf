@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SCOTUS PDF Reader — a web app that takes Supreme Court slip opinion PDFs (optimized for print) and reflows them into a mobile-friendly reading experience. Deployed on Netlify at https://scotuspdf.netlify.app.
+SCOTUS PDF Reader — a web app that takes Supreme Court slip opinion PDFs (optimized for print) and reflows them into a mobile-friendly reading experience. Deployed on Netlify at https://scotuspdf.com (also https://scotuspdf.netlify.app).
 
 ## Commands
 
@@ -30,10 +30,14 @@ This runs `npm test && npm run build && npx netlify-cli deploy --prod --no-build
 ## Architecture
 
 ```
-User → index.astro (paste URL) → /read/:term/:filename
+User → index.astro (paste URL) → /read/:term/:filename        (slip opinions)
+                                → /read/bv/:vol/:page          (bound volumes 502–591)
+                                → /read/usreports/:vol/:page   (US Reports 1–501 via govinfo)
        Reader.svelte (Svelte 5 island, client:load)
-         → /api/parse?url=<scotus-pdf-url>
-           → S3 cache check → if miss: download PDF → parse with pdfjs-dist → cache in S3
+         → /api/parse?url=<scotus-pdf-url>     (slip opinions)
+         → /api/parse-bv?volume=N&page=N       (bound volumes)
+         → /api/parse-usreports?vol=N&page=N   (US Reports via govinfo.gov)
+           → S3 cache check → if miss: fetch PDF → parse → cache in S3
          → returns ParsedOpinion JSON
          → renders chapters with footnote popovers, font size control, chapter nav
 ```
@@ -46,11 +50,18 @@ User → index.astro (paste URL) → /read/:term/:filename
   - Handles small-cap rendering artifacts (SCOTUS PDFs use actual small caps where first letter is 11pt and rest are 9pt — pdfjs returns these as separate text items)
   - `fixSmallCaps()` post-processing cleans up split names like "J USTICE G ORSUCH" → "JUSTICE GORSUCH"
   - `KNOWN_JUSTICES` map used for name normalization
+  - `parseSectionHeader()` handles three name formats: all-caps drop-cap (`G INSBURG`), title-case concurring/dissenting (`Ginsburg, J., dissenting`), and BV running header `Opinion of` form (`Opinion of Ginsburg, J.`)
   - **pdfjs-dist serverless fix**: Must pre-load worker onto `globalThis.pdfjsWorker` before importing pdf.mjs, because Web Workers aren't available in Netlify Functions
 
 - **`src/components/Reader.svelte`** — Svelte 5 reader UI with `$state`/`$effect`/`$derived` runes. Chapter navigation, font size slider, chapter-level footnotes, localStorage position persistence. Paged mode with tap zones (right 60% forward, left 25% backward) and swipe/keyboard navigation. Clickable citation modals for US Reports (Oyez lookup), USC statutes (govinfo HTML), and Federal Register (govinfo HTML).
 
 - **`src/pages/api/parse.ts`** — Server endpoint that validates URL (must be supremecourt.gov HTTPS), checks S3 cache, downloads PDF with `fetchPdfWithLimits()` (25MB cap, 15s timeout), parses, returns JSON. Uses singleflight dedup to avoid concurrent identical fetches.
+
+- **`src/lib/bv-parser.ts`** — Parses a single case out of a SCOTUS bound volume PDF (vol 502–591). Locates the case by scanning for "Cite as: X U.S. startPage" in the header band, then extracts body text and footnotes page by page. **Chapter transition**: when the running header changes on a page, scans body lines with a 5-line lookahead for the new section's delivery line ("Justice X, with whom...") so that majority tail text on that page goes to the old chapter, not the new one. Running headers use title-case justice names ("Opinion of Ginsburg, J.") which `parseSectionHeader()` handles.
+
+- **`src/pages/api/parse-bv.ts`** — Endpoint for bound volumes. Resolves the PDF URL (single BV for vol 502–585; preliminary prints PP1/PP2 for vol 586–591), downloads, and calls `parseBoundVolumeCase()`. 30-day S3 cache.
+
+- **`src/pages/api/parse-usreports.ts`** — Endpoint for US Reports vol 1–501 via govinfo.gov. Fetches `USREPORTS-{vol}/granules/USREPORTS-{vol}-{page}/pdf` and parses with `parsePdf()`. If the parser returns "Unknown Case" (govinfo PDFs lack the SCOTUS header text), falls back to the `/summary` API which returns `"title": "Party v. Party, N U.S. P (YYYY)"` — strips the citation suffix to get a clean title. 30-day S3 cache. **Requires `GOVINFO_API_KEY` env var** (set in Netlify env and in `.env` for local dev).
 
 - **`src/pages/api/recent.ts`** — Scrapes supremecourt.gov for recent slip opinions via HTML table regex parsing. Handles HTML entity decoding and deduplication.
 
@@ -61,6 +72,8 @@ User → index.astro (paste URL) → /read/:term/:filename
 - **`src/pages/api/uscode.ts`** — Fetches USC section HTML from govinfo.gov. Uses link service (`/link/uscode/{title}/{section}?year=N`) to get base granule path, then probes newer annual edition years in parallel via HEAD. Detects govinfo soft-404s (navigation page served as HTTP 200) by checking for `"GovInfo logo"` in body; falls back to base edition. 30-day S3 cache.
 
 - **`src/pages/api/fedregister.ts`** — Fetches Federal Register issue HTML from govinfo.gov. Uses link service (`/link/fr/{volume}/{page}`) → 302 to `FR-YYYY-MM-DD/pdf/granule.pdf#pageN`. Converts to HTML URL (strip `#page=N`, swap `/pdf/`→`/html/`, `.pdf`→`.htm`). 30-day S3 cache.
+
+- **`src/pages/api/find-slip.ts`** — Finds the slip opinion PDF for a given docket or case name by scraping the supremecourt.gov slip opinion listing page (`/opinions/slipopinion/{termCode}`). Term guard: returns 404 for terms before OT2015 (listing pages for OT2015–OT2018 exist; OT2015–2017 have no individual PDFs but will gracefully 404).
 
 - **`src/lib/s3cache.ts`** — Optional S3 caching layer. Gracefully no-ops when `S3_BUCKET` env var is not set.
 
@@ -73,7 +86,9 @@ User → index.astro (paste URL) → /read/:term/:filename
 ### URL Scheme
 
 - `/` — Home page (search box + recent opinions)
-- `/read/:term/:filename` — Reader (e.g., `/read/25/24-1287_4gcj.pdf`)
+- `/read/:term/:filename` — Slip opinion reader (e.g., `/read/25/24-1287_4gcj.pdf`)
+- `/read/bv/:vol/:page` — Bound volume reader (e.g., `/read/bv/553/285`) — vol 502–591
+- `/read/usreports/:vol/:page` — US Reports reader via govinfo.gov (e.g., `/read/usreports/431/324`) — vol 1–501
 - SCOTUS PDF URL pattern: `https://www.supremecourt.gov/opinions/{term}pdf/{filename}`
 
 ## Tech Stack
@@ -96,6 +111,13 @@ User → index.astro (paste URL) → /read/:term/:filename
 7. **Boilerplate tagging**: `tagBoilerplate()` marks header matter with `{{bp:}}` and the JUSTICE delivery line with `{{bpj:}}`. These are hidden in the Reader UI. The author name is extracted from `{{bpj:}}` to populate `chapter.author` for the chapter nav listing. **Important**: `tagBoilerplate()` runs AFTER `buildParagraphs()` (which runs `markCitations()`). So cite markers may already be embedded in paragraph text when `tagBoilerplate()` sees it — the NOTE-split regex must account for this (e.g. `\b321,\s*337` not `\b321,\s*337\.`).
 8. **Paged mode first chapter**: Don't use `break-before: column` on the first chapter — it leaves the case header alone on page 1 with blank space below. Use `:not(:first-of-type)`.
 9. **Citation markers in paragraph text**: `markCitations()` emits `{{cite:vol:page:pin:caseName:display}}`, `{{usc:title:sec:sub:display}}`, `{{fr:vol:page:year:display}}`, `{{ref:ante|post:page}}`. `parseSegments()` in Reader.svelte splits these back out for rendering. No volume threshold — all U.S. Reporter citations are marked. Explicit year in parens (e.g. `(1986)`) is captured as part of the match/display and used directly for Oyez term lookup (floor: 1955). BV case year: `Math.floor(1991 + (vol - 502) / 3)` from URL `/boundvolumes/{N}bv.pdf`.
+10. **Citation modal reader links by volume range**:
+    - vol 1–501: `/read/usreports/{vol}/{page}` (govinfo.gov US Reports granule)
+    - vol 502–591: `/read/bv/{vol}/{page}` (SCOTUS bound volume / preliminary print PDF)
+    - vol 592+: slip reader link from cite-index or find-slip; Justia fallback if neither available
+11. **BV running headers use title-case names**: Bound volume and preliminary print running headers say "Opinion of Ginsburg, J." (not the all-caps drop-cap "Opinion of G INSBURG , J." used in slip opinions). `parseSectionHeader()` handles both via alternation in the `opinionOfMatch` regex and a title-case branch in `extractJusticeName()`.
+12. **BV chapter transition pages**: When the running header changes mid-page, the page body starts with tail text from the OLD section before the new section's delivery line. `bv-parser.ts` scans body lines with a 5-line lookahead window for "Justice X, with whom..." to find the split point.
+13. **Local dev env**: Create a `.env` file (gitignored) with `GOVINFO_API_KEY=<key>` for `parse-usreports` and other govinfo endpoints to work locally. The key is in Netlify env vars.
 
 ## Test Opinions
 
@@ -105,3 +127,7 @@ Validate parser changes against these real opinions:
 - Coney Island v. Burton (24-808): `https://www.supremecourt.gov/opinions/25pdf/24-808_lkgn.pdf` — boilerplate regression test
 - Bowe v. US (24-5438), Ellingburg v. US (24-482) — footnote and superscript edge cases
 - Complex opinion of the court (24-5774): `https://www.supremecourt.gov/opinions/25pdf/24-5774new_f20h.pdf` — Jackson's opinion is opinion of the court except Part IV-C; confused chapter parsing (open issue #14)
+
+Validate BV/US Reports reader changes against:
+- Wal-Mart v. Dukes: `/read/bv/564/338` — 3 chapters (Syllabus, Opinion of the Court, Opinion of Ginsburg); tests title-case running headers and chapter transition page splitting
+- Teamsters v. United States: `/read/usreports/431/324` — US Reports govinfo reader with title fallback
