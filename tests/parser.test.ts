@@ -234,6 +234,16 @@ describe('extractCaseTitleFromText', () => {
     expect(title).toContain('DYNAMIC PHYSICAL THERAPY');
   });
 
+  it('stops at ON APPLICATION FOR STAY suffix', () => {
+    const text = 'MALLIOTAKIS, ET AL. v. MICHAEL WILLIAMS, ET AL. ON APPLICATION FOR STAY _________________ No. 25A915';
+    const title = extractCaseTitleFromText(text);
+    expect(title).toContain('MALLIOTAKIS');
+    expect(title).toContain('v.');
+    expect(title).toContain('WILLIAMS');
+    expect(title).not.toContain('APPLICATION');
+    expect(title).not.toContain('STAY');
+  });
+
   it('returns Unknown Case when no v. pattern found', () => {
     expect(extractCaseTitleFromText('No case name here\nJust text')).toBe('Unknown Case');
   });
@@ -246,6 +256,10 @@ describe('extractDocketNumber', () => {
 
   it('extracts docket with hyphen', () => {
     expect(extractDocketNumber('No. 23-939')).toBe('23-939');
+  });
+
+  it('extracts emergency application docket (25A914 format)', () => {
+    expect(extractDocketNumber('No. 25A914 _________________')).toBe('25A914');
   });
 
   it('returns empty string when no match', () => {

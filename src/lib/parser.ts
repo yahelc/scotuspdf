@@ -1214,6 +1214,37 @@ export async function parsePdf(pdfData: ArrayBuffer, sourceUrl: string, options:
     });
   }
 
+  // Post-process: split any court-order text that precedes a JUSTICE delivery line
+  // into its own 'order' chapter. This handles emergency orders where a 1-paragraph
+  // court disposition shares a PDF page with the first concurrence, causing the parser
+  // to lump the order text into the concurrence chapter.
+  //
+  // Only apply when the first chapter is a concurrence or dissent (never syllabus or
+  // majority opinion, which can have summary lines that look like delivery lines).
+  if (chapters.length > 0 && /^(concurring|dissenting)-/.test(chapters[0].id)) {
+    const ch = chapters[0];
+    const bpjIdx = ch.paragraphs.findIndex(p => /^\{\{bpj:/.test(p.text));
+    if (bpjIdx > 0) {
+      const orderIdxs: number[] = [];
+      for (let i = 0; i < bpjIdx; i++) {
+        const t = ch.paragraphs[i].text;
+        // Must be untagged AND substantive (not a short stray line or divider)
+        if (!/^\{\{/.test(t) && t.trim().length > 80) orderIdxs.push(i);
+      }
+      if (orderIdxs.length > 0) {
+        const bpParas = ch.paragraphs.filter((p, i) => i < bpjIdx && /^\{\{bp/.test(p.text));
+        const orderParas = orderIdxs.map(i => ch.paragraphs[i]);
+        const orderChapter: Chapter = {
+          id: 'order', title: 'Order', author: null,
+          paragraphs: [...bpParas, ...orderParas],
+          footnotes: [],
+        };
+        const trimmedParas = ch.paragraphs.filter((_, i) => !orderIdxs.includes(i));
+        chapters.splice(0, 1, orderChapter, { ...ch, paragraphs: trimmedParas });
+      }
+    }
+  }
+
   // Extract metadata from page 1 items
   let caseTitle = await extractCaseTitleFromPage1(doc);
   const firstPagesText = pages.slice(0, 3).map((p) => p.bodyLines.join('\n')).join('\n');
@@ -1331,8 +1362,10 @@ export function extractCaseTitleFromText(text: string): string {
   const lines = text.split('\n').filter(l => l.trim());
   for (const line of lines.slice(0, 20)) {
     const trimmed = line.trim();
-    // Match "NAME v. NAME" or "NAME v . NAME" patterns (case caption style)
-    const match = trimmed.match(/^(.+?)\s+v\s*\.\s+(.+?)(?:\s{2,}|$)/);
+    // Match "NAME v. NAME" or "NAME v . NAME" patterns (case caption style).
+    // Stop group 2 at double spaces OR " ON " (catches "ON APPLICATION FOR STAY",
+    // "ON WRIT OF CERTIORARI", etc. that follow the title in application orders).
+    const match = trimmed.match(/^(.+?)\s+v\s*\.\s+(.+?)(?:\s{2,}|\s+ON\s|$)/);
     if (match) {
       let title = (match[1] + ' v. ' + match[2])
         .replace(/\s+/g, ' ')
@@ -1347,7 +1380,8 @@ export function extractCaseTitleFromText(text: string): string {
 }
 
 export function extractDocketNumber(text: string): string {
-  const match = text.match(/No\.\s*([\d\-\u2013]+)/);
+  // Handles regular dockets (24-808), emergency applications (25A914), and original (22O145)
+  const match = text.match(/No\.\s*(\d+[A-Z]?\d*(?:[-\u2013]\d+)*)/);
   return match ? match[1].replace('\u2013', '-') : '';
 }
 

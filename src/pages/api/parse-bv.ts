@@ -65,7 +65,7 @@ export const GET: APIRoute = async ({ request }) => {
   const urlGroups = getUrlGroups(volume);
 
   if (isNaN(volume) || isNaN(page) || page < 1 || !urlGroups.length) {
-    return new Response(JSON.stringify({ error: 'Bound volume not yet published for this case' }), {
+    return new Response(JSON.stringify({ error: 'Bound volume not found for this case' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
