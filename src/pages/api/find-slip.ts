@@ -2,15 +2,16 @@ import type { APIRoute } from 'astro';
 
 export const prerender = false;
 
-// Fetch the slip opinion listing for an OT term and find the PDF URL for a docket.
+// Fetch the slip opinion listing for an OT term and find the PDF URL for a docket or case name.
 // The supremecourt.gov listing pages (/opinions/slipopinion/{term}) have been
 // accessible with full PDF links starting from OT2019 (term code "19").
 export const GET: APIRoute = async ({ request }) => {
   const url = new URL(request.url);
   const docket = url.searchParams.get('docket');
+  const name = url.searchParams.get('name');    // alternative to docket: fuzzy case-name match
   const term = url.searchParams.get('term'); // 4-digit year string, e.g. "2021"
 
-  if (!docket || !term) {
+  if ((!docket && !name) || !term) {
     return new Response(JSON.stringify({ error: 'Missing parameters' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
@@ -40,26 +41,39 @@ export const GET: APIRoute = async ({ request }) => {
     });
   }
 
+  // Pre-compute name match parts (split "Merrill v. Milligan" → ["merrill", "milligan"])
+  let nameParts: string[] = [];
+  if (name) {
+    const [p1 = '', p2 = ''] = name.split(/\s+v\.\s+/i);
+    nameParts = [p1.trim().toLowerCase(), p2.trim().toLowerCase()].filter(Boolean);
+  }
+
   // The page is an HTML table. Each row has: #, date, docket, case-name+PDF-link.
-  // Find the row containing this docket number and extract its PDF href.
   const rowRegex = /<tr[^>]*>(.*?)<\/tr>/gis;
   let match;
   while ((match = rowRegex.exec(html)) !== null) {
     const row = match[1];
-    // Check if this row's docket cell contains our docket number
-    if (!row.includes(docket)) continue;
 
     const pdfMatch = row.match(/href='(\/opinions\/(\d+)pdf\/([\w\-_.]+\.pdf))'/i);
-    if (pdfMatch) {
+    if (!pdfMatch) continue;
+
+    // Match by docket number (exact substring)
+    if (docket && row.includes(docket)) {
       return new Response(
         JSON.stringify({ term: pdfMatch[2], filename: pdfMatch[3] }),
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'max-age=86400, s-maxage=86400',
-          },
-        }
+        { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=86400, s-maxage=86400' } }
       );
+    }
+
+    // Match by case name: extract link text and check both party name fragments appear
+    if (nameParts.length > 0) {
+      const linkText = (row.match(/>([^<]{4,})</)?.[1] ?? '').toLowerCase();
+      if (nameParts.every(p => linkText.includes(p))) {
+        return new Response(
+          JSON.stringify({ term: pdfMatch[2], filename: pdfMatch[3] }),
+          { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=86400, s-maxage=86400' } }
+        );
+      }
     }
   }
 

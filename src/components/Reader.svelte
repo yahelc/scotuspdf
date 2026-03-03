@@ -1005,6 +1005,30 @@
         }
       }
     } catch {}
+
+    // For slip opinions (page === '___'), Oyez volume+page matching fails because
+    // there's no assigned U.S. Reports page yet. Fall back to find-slip by case name:
+    // search the supremecourt.gov opinions listing for the matching term directly.
+    if (page.includes('_') && caseName && !citeModalSlipUrl) {
+      const displayYear = display.match(/\((\d{4})\)/)?.[1];
+      const cy = displayYear ? parseInt(displayYear) : new Date().getFullYear();
+      // A case from calendar year Y is usually in OT(Y-1); try OT(Y-1) and OT(Y).
+      const termYears = [cy - 1, cy].filter(y => y >= 2019);
+      for (const ty of termYears) {
+        try {
+          const r = await fetch(`/api/find-slip?name=${encodeURIComponent(caseName)}&term=${ty}`);
+          if (r.ok) {
+            const data = await r.json();
+            if (data.term && data.filename) {
+              citeModalSlipUrl = `/read/${data.term}/${data.filename}`;
+              citeCache.set(cacheKey, { info: citeModalInfo, slipUrl: citeModalSlipUrl });
+              break;
+            }
+          }
+        } catch {}
+      }
+    }
+
     citeModalLoading = false;
     // Cache the result (slipUrl may still be pending, but we update it above when it resolves)
     citeCache.set(cacheKey, { info: citeModalInfo, slipUrl: citeModalSlipUrl });
