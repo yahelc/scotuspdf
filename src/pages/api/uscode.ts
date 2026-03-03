@@ -19,7 +19,7 @@ interface EditionResult {
 
 async function findBestEditionHtml(
   title: number,
-  section: number,
+  section: string,
   startYear: number
 ): Promise<EditionResult | null> {
   // Step 1: Use the link service to get the base granule path (it caps at the latest main
@@ -107,10 +107,10 @@ export const GET: APIRoute = async ({ request }) => {
   }
 
   const title = parseInt(titleParam);
-  const section = parseInt(sectionParam);
+  const section = sectionParam;
   const decisionYear = parseInt(yearParam);
 
-  if (isNaN(title) || isNaN(section) || isNaN(decisionYear)) {
+  if (isNaN(title) || !/^[\w-]+$/.test(section) || isNaN(decisionYear)) {
     return new Response(JSON.stringify({ error: 'Invalid params' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },

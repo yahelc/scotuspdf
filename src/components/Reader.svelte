@@ -716,7 +716,7 @@
     // cite marker: {{cite:volume:page:pinpoint:caseName:display}} — caseName may be empty
     // usc marker:  {{usc:title:section:subsection:display}}
     // fr marker:   {{fr:volume:page:year:display}}
-    const regex = /\{\{fn:(\d+)\}\}|\{\{cite:(\d+):([\d_]+):([\d_]+):([^:]*):(.+?)\}\}|\{\{ref:(ante|post):(\d+)\}\}|\{\{usc:(\d+):(\d+[a-z]?):([^:]*):([^}]+)\}\}|\{\{fr:(\d+):(\d+):(\d{4}):([^}]+)\}\}/g;
+    const regex = /\{\{fn:(\d+)\}\}|\{\{cite:(\d+):([\d_]+):([\d_]+):([^:]*):(.+?)\}\}|\{\{ref:(ante|post):(\d+)\}\}|\{\{usc:(\d+):([^:]+):([^:]*):([^}]+)\}\}|\{\{fr:(\d+):(\d+):(\d{4}):([^}]+)\}\}/g;
     let lastIndex = 0;
     let match;
     while ((match = regex.exec(text)) !== null) {
@@ -1033,6 +1033,28 @@
           }
         } catch {}
       }
+    }
+
+    // Non-blocking: for vol 592+ without a slip URL yet, try find-slip by docket.
+    // The cite-index covers OT2019–OT2024; this handles current-term cases not yet indexed.
+    if (parseInt(volume) >= 592 && !page.includes('_') && !citeModalSlipUrl && citeModalInfo?.docket_number && citeModalInfo?.term) {
+      const termYear = parseInt(citeModalInfo.term);
+      (async () => {
+        for (const ty of [termYear, termYear - 1]) {
+          if (ty < 2015) break;
+          try {
+            const r = await fetch(`/api/find-slip?docket=${encodeURIComponent(citeModalInfo!.docket_number)}&term=${ty}`);
+            if (r.ok) {
+              const data = await r.json();
+              if (data.term && data.filename) {
+                citeModalSlipUrl = `/read/${data.term}/${data.filename}`;
+                citeCache.set(cacheKey, { info: citeModalInfo, slipUrl: citeModalSlipUrl });
+                break;
+              }
+            }
+          } catch {}
+        }
+      })();
     }
 
     citeModalLoading = false;
@@ -1360,13 +1382,16 @@
             <p class="cite-modal-render-note">Experimental: reads from the SCOTUS bound volume PDF</p>
           {:else if citeModalPage.includes('_')}
             <p class="cite-modal-render-note">Slip opinion — U.S. Reports page not yet assigned.</p>
-          {:else if parseInt(citeModalVolume) >= 1 && !citeModalInfo}
+          {:else if parseInt(citeModalVolume) >= 1 && parseInt(citeModalVolume) <= 501}
+            <a class="cite-modal-render-link" href="/read/usreports/{citeModalVolume}/{citeModalPage}" target="_blank" rel="noopener">
+              Read {citeModalTitle} →
+            </a>
+            <p class="cite-modal-render-note">Experimental: reads from the govinfo.gov US Reports PDF</p>
+          {:else if parseInt(citeModalVolume) >= 1}
             <a class="cite-modal-render-link" href="https://supreme.justia.com/cases/federal/us/{citeModalVolume}/{citeModalPage}/" target="_blank" rel="noopener">
               View on Justia ↗
             </a>
-            <p class="cite-modal-render-note">Full text from Justia's historical SCOTUS archive</p>
-          {:else}
-            <p class="cite-modal-render-note">Bound volume not yet available for this case</p>
+            <p class="cite-modal-render-note">Full text from Justia's SCOTUS archive</p>
           {/if}
         </div>
         {#if citeModalLoading}

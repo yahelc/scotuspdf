@@ -48,9 +48,12 @@ function extractJusticeName(text: string): string | null {
     const name = splitMatch[1] + splitMatch[2];
     if (KNOWN_JUSTICES[name]) return name;
   }
-  // Direct: "THOMAS"
+  // Direct all-caps: "THOMAS"
   const directMatch = text.match(/^([A-Z]{2,})$/);
   if (directMatch && KNOWN_JUSTICES[directMatch[1]]) return directMatch[1];
+  // Title-case: "Ginsburg" → look up "GINSBURG"
+  const upperName = text.trim().toUpperCase();
+  if (KNOWN_JUSTICES[upperName]) return upperName;
   return null;
 }
 
@@ -75,7 +78,7 @@ export function parseSectionHeader(headerText: string): SectionHeader | null {
   // Other justices' "Opinion of" headers are separate opinions (concurring/dissenting
   // determined by context, but we label them generically)
   const opinionOfMatch = raw.match(
-    /^Opinion of\s+([A-Z](?:\s+[A-Z]+)?)\s*,\s*(?:C\.\s*)?J\.$/
+    /^Opinion of\s+([A-Z](?:\s+[A-Z]+)?|[A-Z][a-z]+)\s*,\s*(?:C\.\s*)?J\.$/
   );
   if (opinionOfMatch) {
     const name = extractJusticeName(opinionOfMatch[1]);
@@ -275,7 +278,8 @@ function expandUscSections(
   firstDisplay: string
 ): string {
   const sub1 = subsRaw ? subsRaw.replace(/\s+/g, '') : '';
-  let result = `{{usc:${title}:${section}:${sub1}:${firstDisplay}}}`;
+  const normalSection = section.replace(/\u2013/g, '-'); // normalize en dash to hyphen for API
+  let result = `{{usc:${title}:${normalSection}:${sub1}:${firstDisplay}}}`;
 
   if (continuations) {
     const contRe = /,\s*(?:and\s+)?(\d+[a-z]?)((?:\s*\([^)\s]{1,8}\))*)/g;
@@ -336,7 +340,7 @@ export function markCitations(text: string, ctx: CitationContext = { lastUscTitl
   // Captures optional comma-separated continuation sections so each becomes its own marker.
   // Updates ctx.lastUscTitle so subsequent bare §-refs can inherit the title number.
   result = result.replace(
-    /(\d+)\s+U\.\s*S\.\s*C\.\s*§§?\s*(\d+[a-z]?)((?:\s*\([^)\s]{1,8}\))+)?((?:,\s*(?:and\s+)?\d+[a-z]?(?:\s*\([^)\s]{1,8}\))*)+)?(?=[\s,;.")]|$)/g,
+    /(\d+)\s+U\.\s*S\.\s*C\.\s*§§?\s*(\d+[a-z]?(?:[–\-]\d+[a-z]?)*)((?:\s*\([^)\s]{1,8}\))+)?((?:,\s*(?:and\s+)?\d+[a-z]?(?:\s*\([^)\s]{1,8}\))*)+)?(?=[\s,;.")]|$)/g,
     (match, title, section, subs, continuations) => {
       ctx.lastUscTitle = title;
       const firstDisplay = continuations
@@ -1294,14 +1298,24 @@ function extractAuthorFromDeliveryLine(paragraphs: { text: string }[]): string |
 }
 
 async function extractCaseTitleFromPage1(doc: any): Promise<string> {
+  // Try pages 1-3: preliminary prints have a cover page before the case heading
+  const numPages: number = doc.numPages;
+  for (let pageNum = 1; pageNum <= Math.min(3, numPages); pageNum++) {
+    const result = await extractTitleFromDocPage(doc, pageNum);
+    if (result !== 'Unknown Case') return result;
+  }
+  return 'Unknown Case';
+}
+
+async function extractTitleFromDocPage(doc: any, pageNum: number): Promise<string> {
   try {
-    const page = await doc.getPage(1);
+    const page = await doc.getPage(pageNum);
     const tc = await page.getTextContent();
 
     const items = tc.items.filter((i: any) => 'str' in i && i.str.trim());
     items.sort((a: any, b: any) => b.transform[5] - a.transform[5] || a.transform[4] - b.transform[4]);
 
-    // Find "SUPREME COURT OF THE UNITED STATES" — the case title appears just below it
+    // Find "SUPREME COURT OF THE UNITED STATES" — the case title appears near it
     let supremeCourtY = -1;
     for (const item of items) {
       if (item.str.includes('SUPREME COURT OF THE UNITED STATES')) {
@@ -1312,24 +1326,57 @@ async function extractCaseTitleFromPage1(doc: any): Promise<string> {
 
     if (supremeCourtY < 0) return 'Unknown Case';
 
-    // Collect all items between SCOTUS header and the CERTIORARI/No. line
-    // Find the CERTIORARI or "No." line to bound the bottom
-    let certY = supremeCourtY - 100;
+    // Find key anchor lines below the SCOTUS header (items are sorted top→bottom = high Y→low Y)
+    let noY = -1;    // Y of "No." docket line
+    let writY = -1;  // Y of "ON WRIT"/"CERTIORARI TO" line
     for (const item of items) {
       const y = item.transform[5];
       const t = item.str.trim();
-      if (y < supremeCourtY && (t.startsWith('CERTIORARI') || t.startsWith('ON WRIT') || /^No\.\s/.test(t))) {
-        certY = Math.max(certY, y);
-        break;
+      if (y >= supremeCourtY) continue;
+      if (noY < 0 && /^No\.\s/.test(t)) noY = y;
+      if (writY < 0 && (t.startsWith('ON WRIT') || t.startsWith('CERTIORARI'))) writY = y;
+      if (noY > 0 && writY > 0) break;
+    }
+
+    // Determine which Y range contains the case title:
+    //
+    // Slip opinions:       SCOTUS header → [case title] → No. → CERTIORARI
+    // Preliminary prints:  SCOTUS header → AT OCTOBER TERM → No. → [case title] → ON WRIT
+    //
+    // Distinction: if the only content above the No. line (below SCOTUS header) is
+    // "AT OCTOBER TERM" / a year number, we're in preliminary print layout.
+    // Anchor Y for the bottom of the title region. In slip opinions the case title
+    // is above the No./CERTIORARI line; in preliminary prints the structure can differ.
+    // Use a 100pt buffer (same as original algorithm) to exclude content that creeps
+    // just above the anchor line (e.g. "appeal from...").
+    const anchorY = noY > 0 ? noY : (writY > 0 ? writY : 0);
+    let titleTopY = supremeCourtY;
+    let titleBottomY = anchorY > 0 ? Math.max(supremeCourtY - 100, anchorY) : supremeCourtY - 100;
+
+    if (noY > 0 && writY > 0) {
+      // Both No. and ON WRIT found: check if the title is above No. (slip opinion)
+      // or below No. (preliminary print where No. precedes the title).
+      const aboveNoItems = items.filter(i => {
+        const y = i.transform[5];
+        return y < supremeCourtY && y > noY;
+      });
+      const hasRealTitleAboveNo = aboveNoItems.some(i => {
+        const t = i.str.trim();
+        return t && !/^AT\s+OCTOBER\s+TERM/i.test(t) && !/^\d{4}$/.test(t) && t !== 'Syllabus';
+      });
+      if (!hasRealTitleAboveNo) {
+        // Preliminary print: title is between the No. line and ON WRIT
+        titleTopY = noY;
+        titleBottomY = writY;
       }
     }
 
     const titleItems: { x: number; y: number; text: string }[] = [];
     for (const item of items) {
       const y = item.transform[5];
-      // Between SCOTUS header and certiorari line, skip the "Syllabus" header
-      if (y < supremeCourtY && y > certY && item.str.trim() !== 'Syllabus') {
-        titleItems.push({ x: item.transform[4], y, text: item.str.trim() });
+      const t = item.str.trim();
+      if (y < titleTopY && y > titleBottomY && t !== 'Syllabus') {
+        titleItems.push({ x: item.transform[4], y, text: t });
       }
     }
 
@@ -1356,7 +1403,9 @@ async function extractCaseTitleFromPage1(doc: any): Promise<string> {
     // Join lines and clean up
     let title = lines.join(' ')
       .replace(/\s+/g, ' ')
-      .replace(/\bET AL\b\.?\s*\.?/gi, 'et al.')  // normalize "ET AL" + stray period
+      // Strip preliminary print boilerplate prefix ("AT OCTOBER TERM, YYYY ")
+      .replace(/^(?:AT\s+OCTOBER\s+TERM,?\s*\d{4}\s*)/i, '')
+      .replace(/\bET AL\b\.?(?:\s*\.)?/gi, 'et al.')  // normalize "ET AL" + optional stray period (don't eat trailing space)
       .replace(/\s+v\s*\.\s*/g, ' v. ')
       .replace(/\s+v\s+(?=[A-Z])/, ' v. ')
       .replace(/\.\s*\./g, '.')  // collapse double periods

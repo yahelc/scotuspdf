@@ -460,6 +460,22 @@ describe('markCitations', () => {
     expect(result).toContain('{{usc:28:2241:(a):2241(a)}}');
   });
 
+  it('marks a USC section with a letter suffix (e.g. § 2000e)', () => {
+    const result = markCitations('42 U. S. C. § 2000e.');
+    expect(result).toContain('{{usc:42:2000e::42 U. S. C. § 2000e}}');
+  });
+
+  it('marks a USC section with an en-dash numeric suffix (e.g. § 2000e–2)', () => {
+    const result = markCitations('42 U. S. C. § 2000e–2(a).');
+    // En dash normalized to hyphen in the section field
+    expect(result).toContain('{{usc:42:2000e-2:(a):42 U. S. C. § 2000e–2(a)}}');
+  });
+
+  it('marks a USC section with a hyphen numeric suffix (e.g. § 2000e-2)', () => {
+    const result = markCitations('42 U. S. C. § 2000e-2(a).');
+    expect(result).toContain('{{usc:42:2000e-2:(a):42 U. S. C. § 2000e-2(a)}}');
+  });
+
   it('does not mark bare §-ref when no USC title has been seen', () => {
     const result = markCitations('See § 2254.');
     expect(result).not.toContain('{{usc:');
