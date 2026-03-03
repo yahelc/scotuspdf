@@ -684,7 +684,7 @@
       const cleaned = para.text
         .replace(/\{\{(?:h[123]|bp|bpj):([^}]*)\}\}/g, '$1')
         .replace(/\{\{fn:\d+\}\}/g, '')
-        .replace(/\{\{cite:\d+:\d+:\d+:[^:]*:(.+?)\}\}/g, '$1')
+        .replace(/\{\{cite:\d+:[\d_]+:[\d_]+:[^:]*:(.+?)\}\}/g, '$1')
         .replace(/\{\{ref:(?:ante|post):\d+\}\}/g, '');
       words += cleaned.trim().split(/\s+/).filter(Boolean).length;
     }
@@ -716,7 +716,7 @@
     // cite marker: {{cite:volume:page:pinpoint:caseName:display}} — caseName may be empty
     // usc marker:  {{usc:title:section:subsection:display}}
     // fr marker:   {{fr:volume:page:year:display}}
-    const regex = /\{\{fn:(\d+)\}\}|\{\{cite:(\d+):(\d+):(\d+):([^:]*):(.+?)\}\}|\{\{ref:(ante|post):(\d+)\}\}|\{\{usc:(\d+):(\d+[a-z]?):([^:]*):([^}]+)\}\}|\{\{fr:(\d+):(\d+):(\d{4}):([^}]+)\}\}/g;
+    const regex = /\{\{fn:(\d+)\}\}|\{\{cite:(\d+):([\d_]+):([\d_]+):([^:]*):(.+?)\}\}|\{\{ref:(ante|post):(\d+)\}\}|\{\{usc:(\d+):(\d+[a-z]?):([^:]*):([^}]+)\}\}|\{\{fr:(\d+):(\d+):(\d{4}):([^}]+)\}\}/g;
     let lastIndex = 0;
     let match;
     while ((match = regex.exec(text)) !== null) {
