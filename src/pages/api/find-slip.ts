@@ -65,10 +65,18 @@ export const GET: APIRoute = async ({ request }) => {
       );
     }
 
-    // Match by case name: extract link text and check both party name fragments appear
+    // Match by case name: extract text from the PDF anchor tag (the case name link).
+    // Do NOT use a generic text-node scan — the first text node in the row is the date.
     if (nameParts.length > 0) {
-      const linkText = (row.match(/>([^<]{4,})</)?.[1] ?? '').toLowerCase();
-      if (nameParts.every(p => linkText.includes(p))) {
+      const anchorMatch = row.match(/<a\s[^>]*href='[^']*\.pdf'[^>]*>([^<]+)<\/a>/i);
+      const linkText = (anchorMatch?.[1] ?? '').toLowerCase();
+      // Primary: both party fragments present (handles stable names)
+      // Fallback: only p2 matches when p2 is specific (≥7 chars) — handles cases where
+      // the petitioner changed between the stay and the merits (e.g. Merrill→Allen)
+      const [p1, p2] = nameParts;
+      const bothMatch = nameParts.every(p => linkText.includes(p));
+      const p2OnlyMatch = p2 && p2.length >= 7 && linkText.includes(p2);
+      if (bothMatch || p2OnlyMatch) {
         return new Response(
           JSON.stringify({ term: pdfMatch[2], filename: pdfMatch[3] }),
           { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=86400, s-maxage=86400' } }

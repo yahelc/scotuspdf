@@ -961,8 +961,11 @@
             // match the volume we're looking for, skip — it's a different case entirely.
             // This prevents false matches when the same party name appears across volumes
             // (e.g. "United States" is in hundreds of cases across every term).
+            // Exception: for slip opinions (page === '___') the volume may be wrong too
+            // (e.g. Merrill v. Milligan cited as 595 U.S. but actually 599 U.S.), so
+            // skip the volume guard and rely on the name+term match alone.
             const oyezVol = parseInt(c.citation?.volume);
-            if (!isNaN(oyezVol) && oyezVol !== vol) continue;
+            if (!isNaN(oyezVol) && oyezVol !== vol && !page.includes('_')) continue;
 
             const oyezName = (c.name || '').toLowerCase();
             const p1Match = p1 && oyezName.includes(p1);
@@ -971,7 +974,10 @@
             // 3+ words required for p2 to be distinctive on its own.
             // 2-word names like "United States" or "New York" appear in hundreds of
             // cases across every term and must not match without p1 also matching.
-            const p2Distinctive = p2.split(/\s+/).length >= 3;
+            // Exception: for slip opinions, also allow a single-word p2 match when p2
+            // is specific (≥7 chars) — handles petitioner renames (Merrill→Allen).
+            const p2Distinctive = p2.split(/\s+/).length >= 3 ||
+              (page.includes('_') && p2.length >= 7);
             // Match if both parties found, OR one party is distinctive and matches alone.
             // - p1 with 3+ words: handles abbreviations in p2 (e.g. "OSHA", "EPA")
             // - p2 with 3+ words: handles abbreviations in p1 (e.g. "FCC", "SEC")
