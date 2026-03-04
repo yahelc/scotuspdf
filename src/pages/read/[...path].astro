@@ -13,6 +13,8 @@ const parts = path.split('/');
 let pdfUrl = '';
 let apiUrl = '';
 let cacheKey = '';
+let slipTerm = '';
+let slipFilename = '';
 
 if (parts[0] === 'bv' && parts.length >= 3) {
   // Bound volume: /read/bv/553/285
@@ -26,10 +28,10 @@ if (parts[0] === 'bv' && parts.length >= 3) {
   cacheKey = `parsed/usreports/${parts[1]}/${parts[2]}.json`;
 } else if (parts.length >= 2) {
   // Slip opinion: /read/25/24-1287_4gcj.pdf
-  const term = parts[0];
-  const filename = parts.slice(1).join('/');
-  pdfUrl = `https://www.supremecourt.gov/opinions/${term}pdf/${filename}`;
-  cacheKey = `parsed/opinions/${term}pdf/${filename.replace(/\.pdf$/, '')}.json`;
+  slipTerm = parts[0];
+  slipFilename = parts.slice(1).join('/');
+  pdfUrl = `https://www.supremecourt.gov/opinions/${slipTerm}pdf/${slipFilename}`;
+  cacheKey = `parsed/opinions/${slipTerm}pdf/${slipFilename.replace(/\.pdf$/, '')}.json`;
 }
 
 // Allow ?url= override
@@ -40,16 +42,46 @@ if (urlParam) {
     const parsed = new URL(urlParam);
     const keyBase = parsed.pathname.replace(/^\//, '').replace(/\.pdf$/, '');
     cacheKey = `parsed/${keyBase}.json`;
+    // Extract term/filename from URL for listing fallback
+    const m = parsed.pathname.match(/\/opinions\/(\d+)pdf\/(.+\.pdf)$/i);
+    if (m) { slipTerm = m[1]; slipFilename = m[2]; }
   } catch {}
 }
 
-// Try to get the case title from S3 cache for OG metadata (fast if cached, graceful no-op if not)
+// Try to get the case title for OG metadata.
+// 1) S3 cache (instant when warmed; no-ops gracefully when S3 not configured)
 let caseTitle: string | undefined;
 if (cacheKey) {
   try {
     const cached = await getCached<ParsedOpinion>(cacheKey);
     if (cached?.caseTitle && cached.caseTitle !== 'Unknown Case') {
       caseTitle = cached.caseTitle;
+    }
+  } catch {}
+}
+
+// 2) Fallback for slip opinions: scrape the supremecourt.gov listing page to find
+//    the case name by matching the PDF filename. Same parsing as find-slip.ts.
+if (!caseTitle && slipTerm && slipFilename && parseInt(slipTerm) >= 15) {
+  try {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 2000);
+    const resp = await fetch(
+      `https://www.supremecourt.gov/opinions/slipopinion/${slipTerm}`,
+      { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } }
+    );
+    clearTimeout(timeout);
+    if (resp.ok) {
+      const html = await resp.text();
+      const filenameBase = slipFilename.replace(/\.pdf$/i, '');
+      const rowRegex = /<tr[^>]*>(.*?)<\/tr>/gis;
+      let m;
+      while ((m = rowRegex.exec(html)) !== null) {
+        const row = m[1];
+        if (!row.includes(filenameBase)) continue;
+        const anchor = row.match(/<a\s[^>]*href='[^']*\.pdf'[^>]*>([^<]+)<\/a>/i);
+        if (anchor?.[1]) { caseTitle = anchor[1].trim(); break; }
+      }
     }
   } catch {}
 }
