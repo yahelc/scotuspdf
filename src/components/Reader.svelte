@@ -1331,7 +1331,9 @@
                 <h3 class="modal-section-title">Facts of the Case</h3>
                 <span class="modal-chevron">{factsExpanded ? '▲' : '▼'}</span>
               </button>
-              <div class="modal-collapsible" class:expanded={factsExpanded}>
+              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+              <div class="modal-collapsible" class:expanded={factsExpanded}
+                onclick={() => { if (!factsExpanded) factsExpanded = true; }}>
                 <div class="modal-html">{@html cleanHtml(caseInfo.facts_of_the_case)}</div>
               </div>
             </div>
@@ -1343,7 +1345,9 @@
                 <h3 class="modal-section-title">Conclusion</h3>
                 <span class="modal-chevron">{conclusionExpanded ? '▲' : '▼'}</span>
               </button>
-              <div class="modal-collapsible" class:expanded={conclusionExpanded}>
+              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+              <div class="modal-collapsible" class:expanded={conclusionExpanded}
+                onclick={() => { if (!conclusionExpanded) conclusionExpanded = true; }}>
                 <div class="modal-html">{@html cleanHtml(caseInfo.conclusion)}</div>
               </div>
             </div>
@@ -1454,7 +1458,9 @@
                   <h3 class="modal-section-title">Facts of the Case</h3>
                   <span class="modal-chevron">{citeFactsExpanded ? '▲' : '▼'}</span>
                 </button>
-                <div class="modal-collapsible" class:expanded={citeFactsExpanded}>
+                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                <div class="modal-collapsible" class:expanded={citeFactsExpanded}
+                  onclick={() => { if (!citeFactsExpanded) citeFactsExpanded = true; }}>
                   <div class="modal-html">{@html cleanHtml(citeModalInfo.facts_of_the_case)}</div>
                 </div>
               </div>
@@ -1466,7 +1472,9 @@
                   <h3 class="modal-section-title">Conclusion</h3>
                   <span class="modal-chevron">{citeConclusionExpanded ? '▲' : '▼'}</span>
                 </button>
-                <div class="modal-collapsible" class:expanded={citeConclusionExpanded}>
+                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                <div class="modal-collapsible" class:expanded={citeConclusionExpanded}
+                  onclick={() => { if (!citeConclusionExpanded) citeConclusionExpanded = true; }}>
                   <div class="modal-html">{@html cleanHtml(citeModalInfo.conclusion)}</div>
                 </div>
               </div>
@@ -2565,6 +2573,10 @@
     position: relative;
     max-height: 4.5rem;
     overflow: hidden;
+  }
+
+  .modal-collapsible:not(.expanded) {
+    cursor: pointer;
   }
 
   .modal-collapsible::after {

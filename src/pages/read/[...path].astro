@@ -2,6 +2,8 @@
 import Layout from '../../layouts/Layout.astro';
 import Reader from '../../components/Reader.svelte';
 import citeIndex from '../../data/cite-index.json';
+import { getCached } from '../../lib/s3cache';
+import type { ParsedOpinion } from '../../lib/types';
 
 export const prerender = false;
 
@@ -10,30 +12,55 @@ const parts = path.split('/');
 
 let pdfUrl = '';
 let apiUrl = '';
+let cacheKey = '';
 
 if (parts[0] === 'bv' && parts.length >= 3) {
   // Bound volume: /read/bv/553/285
   const volume = parts[1];
   const page = parts[2];
   apiUrl = `/api/parse-bv?volume=${volume}&page=${page}`;
+  cacheKey = `parsed/bv/${volume}/${page}.json`;
 } else if (parts[0] === 'usreports' && parts.length >= 3) {
   // US Reports via govinfo.gov: /read/usreports/488/272
   apiUrl = `/api/parse-usreports?vol=${parts[1]}&page=${parts[2]}`;
+  cacheKey = `parsed/usreports/${parts[1]}/${parts[2]}.json`;
 } else if (parts.length >= 2) {
   // Slip opinion: /read/25/24-1287_4gcj.pdf
   const term = parts[0];
   const filename = parts.slice(1).join('/');
   pdfUrl = `https://www.supremecourt.gov/opinions/${term}pdf/${filename}`;
+  cacheKey = `parsed/opinions/${term}pdf/${filename.replace(/\.pdf$/, '')}.json`;
 }
 
 // Allow ?url= override
 const urlParam = Astro.url.searchParams.get('url');
 if (urlParam) {
   pdfUrl = urlParam;
+  try {
+    const parsed = new URL(urlParam);
+    const keyBase = parsed.pathname.replace(/^\//, '').replace(/\.pdf$/, '');
+    cacheKey = `parsed/${keyBase}.json`;
+  } catch {}
 }
+
+// Try to get the case title from S3 cache for OG metadata (fast if cached, graceful no-op if not)
+let caseTitle: string | undefined;
+if (cacheKey) {
+  try {
+    const cached = await getCached<ParsedOpinion>(cacheKey);
+    if (cached?.caseTitle && cached.caseTitle !== 'Unknown Case') {
+      caseTitle = cached.caseTitle;
+    }
+  } catch {}
+}
+
+const pageTitle = caseTitle ? `${caseTitle} — SCOTUS PDF Reader` : 'Reading...';
+const ogDescription = caseTitle
+  ? `Read the full Supreme Court opinion — chapters, footnotes, and mobile-friendly format.`
+  : 'Read Supreme Court opinions in a mobile-friendly format';
 ---
 
-<Layout title="Reading..." class="reader-page">
+<Layout title={pageTitle} class="reader-page" ogTitle={caseTitle} ogDescription={ogDescription} ogUrl={Astro.url.href}>
   <Reader client:load pdfUrl={pdfUrl} apiUrl={apiUrl} {citeIndex} />
 </Layout>
 
